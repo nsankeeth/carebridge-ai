@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     # Hours a handoff may sit unacknowledged before the follow-up agent flags it.
     ack_sla_hours: int = 24
     cookie_secure: bool = False
+    # Symptom threads: minutes a page may go unacknowledged before escalating, by urgency.
+    urgent_ack_minutes: int = 15
+    urgent_fallback_minutes: int = 30
+    soon_ack_minutes: int = 240
+    routine_ack_minutes: int = 1440
+    scheduler_interval_seconds: int = 60
+    scheduler_enabled: bool = True
 
 
 @lru_cache
