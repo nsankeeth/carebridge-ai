@@ -4,7 +4,7 @@ The same models generate the JSON Schema sent as `response_format` and validate 
 """
 
 import copy
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -103,3 +103,43 @@ def json_schema_for(model: type[BaseModel]) -> dict[str, Any]:
 
     walk(schema)
     return schema
+
+
+# 5. Symptom triage ---------------------------------------------------------------
+
+
+class TriageFlag(_Strict):
+    flag: str = Field(description="Short snake_case name of the warning sign")
+    patient_quote: str = Field(description="The exact words from the patient's messages that show this sign")
+
+
+class TriageQuestion(_Strict):
+    id: str = Field(description="Short snake_case id for the question")
+    question: str = Field(description="One short question a worried parent or patient can answer with a tap")
+    options: list[str] = Field(description="2 to 3 short answer options")
+
+
+class TriageModelOutput(_Strict):
+    level: Literal["ROUTINE", "SOON", "URGENT", "EMERGENCY"] = Field(description="How quickly a clinician needs to act")
+    red_flags: list[TriageFlag] = Field(description="Warning signs present, each with a verbatim patient quote")
+    reasons: list[str] = Field(description="Short reasons for the level, for the clinician")
+    follow_up_questions: list[TriageQuestion] = Field(description="Up to 3 questions whose answers could change the level")
+    care_tip_ids: list[str] = Field(description="Ids from the allowed care-tip list that suit this situation")
+    acknowledgement: str = Field(description="2-3 calm sentences to the patient restating what they told us")
+
+
+class PossibleCause(_Strict):
+    cause: str
+    supporting_quotes: list[str] = Field(description="Verbatim patient words supporting this cause")
+    against_quotes: list[str] = Field(description="Verbatim patient words arguing against it")
+    likelihood: Literal["higher", "lower"]
+
+
+class ClinicianTriageBrief(_Strict):
+    headline: str = Field(description="One line: who, what, how urgent")
+    timeline: list[str] = Field(description="Symptom timeline in order, as reported")
+    red_flags: list[TriageFlag]
+    possible_causes: list[PossibleCause] = Field(description="Differential to consider, most likely first")
+    suggested_questions: list[str]
+    suggested_next_steps: list[str]
+    draft_treatment_idea: str = Field(description="A draft for the clinician to accept or reject; never shown to the patient")
