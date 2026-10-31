@@ -86,14 +86,15 @@ test("patient → AI explanation → consent → handoff → clinician review �
   await expect(page.getByText("Lipids above target")).toHaveCount(0);
 });
 
-test("a clinician cannot open a case that was not shared with them", async ({ page, request }) => {
+test("a clinician cannot open a case that was not shared with them", async ({ page }) => {
   await signInAs(page, "patient");
-  const cases = await page.request.get("/api/patient/cases");
-  const unshared = (await cases.json()).find((c: { handoff: unknown }) => !c.handoff);
-  test.skip(!unshared, "no unshared patient case available");
+  const created = await page.request.post("/api/patient/cases", { data: { title: `E2E unshared ${Date.now()}` } });
+  expect(created.status()).toBe(201);
+  const unshared = await created.json();
   await signOut(page);
   await signInAs(page, "clinician");
   const res = await page.request.get(`/api/clinician/cases/${unshared.id}`);
   expect([403, 404]).toContain(res.status());
-  void request;
+  await page.goto(`/clinician/cases/${unshared.id}`);
+  await expect(page.getByText("This case has not been shared with you")).toBeVisible();
 });

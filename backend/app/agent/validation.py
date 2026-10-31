@@ -223,7 +223,13 @@ def validate_outputs(
     return issues
 
 
-MEDICAL_DETAIL = re.compile(r"\d|mmol|g/l|mg|hba1c|hemoglobin|haemoglobin|glucose|cholesterol|ldl|hdl|creatinine|tsh|ferritin|potassium|sodium|platelet|egfr|alt\b|ast\b", re.I)
+MEDICAL_DETAIL = re.compile(
+    r"\b(?:mmol|umol|g/l|mg|hba1c|a1c|hemoglobin|haemoglobin|hematocrit|glucose|cholesterol|ldl|hdl|triglycerides?|creatinine|"
+    r"tsh|ferritin|potassium|sodium|platelets?|egfr|alt|ast|bilirubin|b12|mcv)\b"
+    # Any number except a duration ("24 hours", "3 business days"); lab values are numbers.
+    r"|(?<![\d.])\d+(?:\.\d+)?(?![\d.])(?!\s?(?:hours?|hrs?|h\b|days?|business days?|weeks?|minutes?|mins?)\b)",
+    re.I,
+)
 
 
 def admin_message_issues(text: str) -> list[str]:

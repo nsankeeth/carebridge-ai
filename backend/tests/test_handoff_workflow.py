@@ -173,3 +173,36 @@ def test_handoff_run_fails_honestly_if_agent_does_not_hand_off(client, auth, peo
     assert detail["status"] == "CONSENT_GRANTED"
     run = next(e for e in detail["executions"] if e["kind"] == "HANDOFF")
     assert run["status"] == "FAILED" and "retried" in run["error"]
+
+
+def test_agent_can_notify_clinician_right_after_creating_handoff(client, auth, people):
+    """Regression: the clinician check must see a handoff created earlier in the same agent run."""
+    case = upload(client, auth["patient_a"])
+    h = auth["patient_a"]
+    client.post(f"/api/patient/cases/{case['id']}/consent/request", headers=h)
+    client.post(f"/api/patient/cases/{case['id']}/consent", headers=h, json={"clinician_id": people["clin_a"]["profile_id"], "confirmed": True})
+    db = SessionLocal()
+    c = db.get(MedicalCase, case["id"])
+    runner = coordinator.ToolRunner(db, c, "HANDOFF", None)
+    # Same order as the live Meta run: the snapshot loads case.handoffs before the handoff exists.
+    assert runner.run(ToolCall(id="0", name="get_case_snapshot", arguments="{}"))["ok"] is True
+    assert runner.run(ToolCall(id="1", name="create_clinician_handoff", arguments="{}"))["ok"] is True
+    msg ={"title": "New case shared for review", "body": "A patient case has been shared with you for review."}
+    assert runner.run(ToolCall(id="2", name="notify_clinician", arguments=json.dumps(msg))) == {"ok": True}
+    assert db.scalars(select(Notification).where(Notification.user_id == people["clin_a"]["user_id"])).one().title == msg["title"]
+
+
+@pytest.mark.parametrize(
+    "text,blocked",
+    [
+        ("Handoff sent over 24 hours ago remains unacknowledged", False),
+        ("Handoff remains unacknowledged past acknowledgement window", False),
+        ("Please respond within 3 business days.", False),
+        ("Your ALT is 62 U/L", True),
+        ("Your ferritin result needs review", True),
+        ("LDL came back at 4.3", True),
+        ("The value was 7.1", True),
+    ],
+)
+def test_admin_message_filter(text, blocked):
+    assert bool(admin_message_issues(text)) is blocked

@@ -25,6 +25,7 @@ from app.errors import AppError
 from app.models import (
     AgentExecution,
     CaseStatus,
+    ClinicalHandoff,
     ExecutionStatus,
     FindingStatus,
     HandoffStatus,
@@ -134,6 +135,14 @@ class ToolRunner:
             self.db.rollback()
             return {"ok": False, "error": e.message, "code": e.code}
 
+    def _current_handoff(self) -> ClinicalHandoff | None:
+        # Query rather than read case.handoffs: a handoff created earlier in this run isn't in the cached relationship.
+        return self.db.scalar(
+            select(ClinicalHandoff)
+            .where(ClinicalHandoff.case_id == self.case.id, ClinicalHandoff.status != HandoffStatus.CANCELLED)
+            .order_by(ClinicalHandoff.sent_at.desc())
+        )
+
     def _t_get_case_snapshot(self, _: dict[str, Any]) -> dict[str, Any]:
         self.db.refresh(self.case)
         return {"ok": True, "snapshot": case_snapshot(self.db, self.case)}
@@ -156,8 +165,8 @@ class ToolRunner:
         due = min(max(int(due), 1), 168) if isinstance(due, int) else 24
         task, created = services.create_task(self.db, self.case, kind=kind, description=description, assignee_role=assignee, created_by="agent", due_in_hours=due)
         if created and kind in ("ack_reminder", "review_reminder"):
-            handoff = services.clinician_handoff(self.db, self.case, self.case.handoffs[-1].clinician) if self.case.handoffs else None
-            if handoff:
+            handoff = self._current_handoff()
+            if handoff and services.active_consent(self.case):
                 services.notify(self.db, handoff.clinician.user_id, self.case, "Follow-up: case awaiting your action", description, source="agent")
         return {"ok": True, "created": created, "task_id": str(task.id), "kind": kind}
 
@@ -181,8 +190,8 @@ class ToolRunner:
         return {"ok": True}
 
     def _t_notify_clinician(self, a: dict[str, Any]) -> dict[str, Any]:
-        handoff = self.case.handoffs[-1] if self.case.handoffs else None
-        if not handoff or handoff.status == HandoffStatus.CANCELLED or not services.active_consent(self.case):
+        handoff = self._current_handoff()
+        if not handoff or not services.active_consent(self.case):
             return {"ok": False, "error": "No clinician is currently authorized on this case"}
         msg = self._message(a, "clinician")
         if isinstance(msg, dict):
