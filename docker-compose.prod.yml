@@ -1,0 +1,36 @@
+# Single-host deployment: Postgres + API/agents + web, fronted by Caddy for automatic HTTPS.
+# Usage: DOMAIN=demo.example.ca docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: medhandoff
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: medhandoff
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U medhandoff"], interval: 3s, retries: 20 }
+    restart: unless-stopped
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://medhandoff:${POSTGRES_PASSWORD}@db:5432/medhandoff
+      COOKIE_SECURE: "true"
+      CORS_ORIGINS: https://${DOMAIN:?set DOMAIN}
+    volumes: [documents:/data/storage]
+    depends_on: { db: { condition: service_healthy } }
+    restart: unless-stopped
+    logging: { driver: awslogs, options: { awslogs-region: ca-central-1, awslogs-group: carebridge, awslogs-stream: backend, awslogs-create-group: "true" } }
+  frontend:
+    build: { context: ./frontend, args: { BACKEND_URL: "http://backend:8000" } }
+    depends_on: [backend]
+    restart: unless-stopped
+    logging: { driver: awslogs, options: { awslogs-region: ca-central-1, awslogs-group: carebridge, awslogs-stream: frontend, awslogs-create-group: "true" } }
+  caddy:
+    image: caddy:2.8-alpine
+    command: caddy reverse-proxy --from ${DOMAIN} --to frontend:3000
+    ports: ["80:80", "443:443"]
+    volumes: [caddy:/data]
+    depends_on: [frontend]
+    restart: unless-stopped
+volumes: { pgdata: {}, documents: {}, caddy: {} }
