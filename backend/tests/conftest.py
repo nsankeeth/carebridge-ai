@@ -2,6 +2,7 @@ import os
 import tempfile
 
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://medhandoff:medhandoff@localhost:5433/medhandoff_test")
+os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["STORAGE_DIR"] = tempfile.mkdtemp(prefix="carebridge-test-")
 
 from collections.abc import Iterator  # noqa: E402
@@ -128,3 +129,49 @@ def share(client: TestClient, auth, people, case_id: str, clinician: str = "clin
     assert r.status_code == 200, r.text
     r = client.post(f"/api/patient/cases/{case_id}/handoff", headers=h)
     assert r.status_code == 202, r.text
+
+
+def make_clinician(name: str, org_id, *, on_call: bool = False, priority: int = 100):
+    """Extra clinician for routing tests; returns the ClinicianProfile id."""
+    from app.models import ClinicianProfile
+
+    db = SessionLocal()
+    u = User(org_id=org_id, email=f"{name}@test.demo", full_name=name, role=UserRole.CLINICIAN, password_hash=hash_password(PASSWORD))
+    db.add(u)
+    db.flush()
+    c = ClinicianProfile(user_id=u.id, specialty="Family Medicine", clinic_name="Test Clinic", on_call=on_call, on_call_priority=priority)
+    db.add(c)
+    db.commit()
+    cid = c.id
+    db.close()
+    return cid
+
+
+def symptom_case(people, *, family_doctor: str | None = "clin_a", on_call: tuple[str, ...] = ("clin_b",), text: str = "tummy hurts", dependent_age_years: float | None = None, status=None):
+    """A consented symptom thread with one patient message, ready for triage. Returns the case id."""
+    import uuid as _uuid
+    from datetime import date, timedelta
+
+    from app.models import CaseKind, CaseStatus, ClinicianProfile, ConsentStatus, Dependent, MedicalCase, Message, MessageAuthor, PatientConsent
+
+    db = SessionLocal()
+    patient = db.get(PatientProfile, _uuid.UUID(people["patient_a"]["profile_id"]))
+    for i, key in enumerate(on_call):
+        cp = db.get(ClinicianProfile, _uuid.UUID(people[key]["profile_id"]))
+        cp.on_call, cp.on_call_priority = True, i + 1
+    patient.primary_clinician_id = _uuid.UUID(people[family_doctor]["profile_id"]) if family_doctor else None
+    dep_id = None
+    if dependent_age_years is not None:
+        dep = Dependent(patient_id=patient.id, name="Ava", date_of_birth=date.today() - timedelta(days=int(dependent_age_years * 365.25)), relation="daughter")
+        db.add(dep)
+        db.flush()
+        dep_id = dep.id
+    case = MedicalCase(org_id=patient.user.org_id, patient_id=patient.id, title=text[:60], kind=CaseKind.SYMPTOM, status=status or CaseStatus.INTAKE, subject_dependent_id=dep_id)
+    db.add(case)
+    db.flush()
+    db.add(PatientConsent(case_id=case.id, patient_id=patient.id, clinician_id=None, audience="CARE_TEAM", scope=["symptom_thread", "attachments"], purpose="care", status=ConsentStatus.GRANTED))
+    db.add(Message(case_id=case.id, author_type=MessageAuthor.PATIENT, author_user_id=patient.user_id, body=text))
+    db.commit()
+    cid = case.id
+    db.close()
+    return cid

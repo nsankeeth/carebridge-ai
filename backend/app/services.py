@@ -12,6 +12,7 @@ from app.access import active_handoff_for
 from app.errors import AppError, Conflict, NotFound
 from app.models import (
     AISummary,
+    CaseKind,
     CaseStatus,
     ClinicalHandoff,
     ClinicalReview,
@@ -20,6 +21,7 @@ from app.models import (
     FollowUpTask,
     HandoffStatus,
     MedicalCase,
+    MessageAuthor,
     NextStep,
     Notification,
     PatientConsent,
@@ -115,6 +117,11 @@ def withdraw_consent(db: Session, case: MedicalCase, actor: User) -> PatientCons
         if t.status == TaskStatus.OPEN:
             t.status = TaskStatus.CANCELLED
     workflow.transition(db, case, CaseStatus.CONSENT_WITHDRAWN, actor=actor, reason="consent withdrawn")
+    if case.kind == CaseKind.SYMPTOM:
+        from app.triage.messages import post_message
+
+        # Patient-side safety guidance (urgency card, 911, urgent-care advice) stays; only clinician access ends.
+        post_message(db, case, MessageAuthor.SYSTEM, "Your care team no longer has access to this conversation.", {"kind": "consent_withdrawn"})
     audit.record(db, "consent.withdrawn", "PatientConsent", consent.id, actor=actor, details={"case_id": str(case.id)})
     return consent
 
