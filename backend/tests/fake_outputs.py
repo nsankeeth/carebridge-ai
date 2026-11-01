@@ -29,6 +29,27 @@ def structured(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
             ],
             "ambiguities": [],
         }
+    if task == "triage_assessment":
+        quote = " ".join(ctx["corpus"].split()[:5])
+        return {
+            "level": ctx.get("rule_level") or "SOON",
+            "red_flags": [{"flag": "reported_symptoms", "patient_quote": quote}] if quote else [],
+            "reasons": ["Test double reasoning."],
+            "follow_up_questions": [{"id": "pain_location", "question": "Where does it hurt most?", "options": ["Middle", "Lower right", "All over"]}],
+            "care_tip_ids": ["rest", "stay_with_them"],
+            "acknowledgement": "Thank you for telling us what is happening. Your care team is being contacted.",
+        }
+    if task == "clinician_triage_brief":
+        quote = " ".join(ctx["corpus"].split()[:5])
+        return {
+            "headline": "Test double brief",
+            "timeline": ["Symptoms as reported."],
+            "red_flags": [{"flag": "reported_symptoms", "patient_quote": quote}],
+            "possible_causes": [{"cause": "Cause A", "supporting_quotes": [quote], "against_quotes": [], "likelihood": "higher"}],
+            "suggested_questions": ["When did it start?"],
+            "suggested_next_steps": ["Call the patient."],
+            "draft_treatment_idea": "Draft for clinician review.",
+        }
     findings = ctx["findings"]
     attention = [f for f in findings if needs_clinician_attention(f)]
     if task == "patient_explanation":
@@ -54,27 +75,6 @@ def structured(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
             "items_requiring_review": [f.test_name for f in attention],
             "data_quality": [],
             "limitations": ["Simulated demo output. Draft for clinician review only."],
-        }
-    if task == "triage_assessment":
-        quote = " ".join(ctx["corpus"].split()[:5])
-        return {
-            "level": ctx.get("rule_level") or "SOON",
-            "red_flags": [{"flag": "reported_symptoms", "patient_quote": quote}] if quote else [],
-            "reasons": ["Test double reasoning."],
-            "follow_up_questions": [{"id": "pain_location", "question": "Where does it hurt most?", "options": ["Middle", "Lower right", "All over"]}],
-            "care_tip_ids": ["rest", "stay_with_them"],
-            "acknowledgement": "Thank you for telling us what is happening. Your care team is being contacted.",
-        }
-    if task == "clinician_triage_brief":
-        quote = " ".join(ctx["corpus"].split()[:5])
-        return {
-            "headline": "Test double brief",
-            "timeline": ["Symptoms as reported."],
-            "red_flags": [{"flag": "reported_symptoms", "patient_quote": quote}],
-            "possible_causes": [{"cause": "Cause A", "supporting_quotes": [quote], "against_quotes": [], "likelihood": "higher"}],
-            "suggested_questions": ["When did it start?"],
-            "suggested_next_steps": ["Call the patient."],
-            "draft_treatment_idea": "Draft for clinician review.",
         }
     raise ValueError(f"No demo output for task {task}")
 
