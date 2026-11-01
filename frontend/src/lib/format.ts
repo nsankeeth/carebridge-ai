@@ -1,4 +1,4 @@
-import type { CaseStatus } from "./types";
+import type { CaseStatus, Urgency } from "./types";
 
 export const STATUS_LABEL: Record<CaseStatus, string> = {
   UPLOADED: "Uploaded",
@@ -15,6 +15,9 @@ export const STATUS_LABEL: Record<CaseStatus, string> = {
   NEEDS_CORRECTION: "Needs correction",
   CONSENT_WITHDRAWN: "Consent withdrawn",
   HANDOFF_CANCELLED: "Handoff cancelled",
+  INTAKE: "Checking",
+  TRIAGED: "Triaged",
+  IN_CONVERSATION: "In conversation",
 };
 
 export type Tone = "neutral" | "info" | "progress" | "success" | "warning" | "danger";
@@ -34,6 +37,9 @@ export const STATUS_TONE: Record<CaseStatus, Tone> = {
   NEEDS_CORRECTION: "danger",
   CONSENT_WITHDRAWN: "warning",
   HANDOFF_CANCELLED: "warning",
+  INTAKE: "progress",
+  TRIAGED: "info",
+  IN_CONVERSATION: "success",
 };
 
 /** Main path through the workflow, used for the progress tracker. */
@@ -81,4 +87,24 @@ export function relative(iso: string | null | undefined): string {
   if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
   return `${Math.floor(diff / 86400)} d ago`;
+}
+
+export const URGENCY_LABEL: Record<Urgency, string> = {
+  EMERGENCY: "Emergency",
+  URGENT: "Urgent",
+  SOON: "Soon",
+  ROUTINE: "Routine",
+};
+
+export const URGENCY_TONE: Record<Urgency, Tone> = {
+  EMERGENCY: "danger",
+  URGENT: "warning",
+  SOON: "info",
+  ROUTINE: "neutral",
+};
+
+export function ageLabel(years: number | null): string {
+  if (years == null) return "";
+  if (years < 1) return `${Math.max(1, Math.round(years * 12))} mo`;
+  return `${Math.floor(years)} y`;
 }

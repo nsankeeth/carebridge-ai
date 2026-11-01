@@ -14,7 +14,10 @@ export type CaseStatus =
   | "PROCESSING_FAILED"
   | "NEEDS_CORRECTION"
   | "CONSENT_WITHDRAWN"
-  | "HANDOFF_CANCELLED";
+  | "HANDOFF_CANCELLED"
+  | "INTAKE"
+  | "TRIAGED"
+  | "IN_CONVERSATION";
 
 export interface User {
   id: string;
@@ -22,7 +25,7 @@ export interface User {
   full_name: string;
   role: Role;
   is_active: boolean;
-  clinician?: { id: string; specialty: string; clinic_name: string };
+  clinician?: { id: string; specialty: string; clinic_name: string; on_call?: boolean; on_call_priority?: number };
   patient?: { id: string; province: string | null };
 }
 
@@ -220,4 +223,127 @@ export interface AiStatus {
   base_url: string;
   api_key_configured: boolean;
   last_successful_meta_call: ModelCall | null;
+}
+
+// --- Symptom threads ---------------------------------------------------------------
+
+export type Urgency = "ROUTINE" | "SOON" | "URGENT" | "EMERGENCY";
+
+export interface Dependent {
+  id: string;
+  name: string;
+  date_of_birth: string;
+  relation: string;
+  age_years: number | null;
+}
+
+export interface ThreadQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+export interface ThreadMessage {
+  id: string;
+  author_type: "PATIENT" | "CLINICIAN" | "AI" | "SYSTEM";
+  author_name: string | null;
+  body: string;
+  payload: ({ kind: string; questions?: ThreadQuestion[]; round?: number; level?: Urgency; document_id?: string; question_id?: string; answer?: string } & Record<string, unknown>) | null;
+  created_at: string;
+}
+
+export interface ThreadListItem {
+  id: string;
+  kind: "SYMPTOM" | "REPORT";
+  title: string;
+  subject_name: string;
+  urgency: Urgency | null;
+  status: CaseStatus;
+  last_message_at: string | null;
+  created_at: string;
+}
+
+export interface CareTeamMember {
+  name: string;
+  status: "SENT" | "ACKNOWLEDGED" | "COMPLETED" | "CANCELLED";
+  notified_at: string;
+  acknowledged_at: string | null;
+}
+
+export interface ThreadAttachment {
+  id: string;
+  filename: string;
+  processing_status: "PROCESSING" | "READY" | "FAILED" | null;
+  uploaded_at: string;
+  findings?: Finding[];
+  explanation?: PatientExplanation | null;
+}
+
+export interface PatientThread extends ThreadListItem {
+  subject: { name: string; relation: string; age_years: number | null; dependent_id: string | null };
+  emergency: boolean;
+  guidance: string | null;
+  emergency_steps: string[];
+  worsening_signs: string[];
+  care_team: CareTeamMember[];
+  messages: ThreadMessage[];
+  pending_questions: ThreadQuestion[];
+  consent_active: boolean;
+  fallback_advised: boolean;
+  attachments: ThreadAttachment[];
+  outcome: string | null;
+}
+
+export interface TriageFlag {
+  flag: string;
+  patient_quote: string;
+}
+
+export interface ClinicianBrief {
+  version: number;
+  content: {
+    headline: string;
+    timeline: string[];
+    red_flags: TriageFlag[];
+    possible_causes: { cause: string; supporting_quotes: string[]; against_quotes: string[]; likelihood: "higher" | "lower" }[];
+    suggested_questions: string[];
+    suggested_next_steps: string[];
+    draft_treatment_idea: string;
+    what_ai_told_patient: string[];
+  };
+  validation_issues: string[];
+  assessment: "ACCURATE" | "CORRECTED" | "REJECTED" | null;
+  correction: string | null;
+  model_id: string;
+  created_at: string;
+}
+
+export interface TriageAssessmentView {
+  rule_level: Urgency | null;
+  rule_flags: string[];
+  model_level: Urgency | null;
+  model_flags: TriageFlag[];
+  dropped_flags: TriageFlag[];
+  reasons: string[];
+  final_level: Urgency | null;
+  status: string;
+  created_at: string;
+}
+
+export interface ClinicianThread extends PatientThread {
+  urgency_set_by: string | null;
+  patient_name: string;
+  patient_phone: string | null;
+  my_handoff: { status: string; ack_due_at: string | null; sent_at: string };
+  brief: ClinicianBrief | null;
+  assessments: TriageAssessmentView[];
+  findings: Finding[];
+  outcome_note: string | null;
+}
+
+export interface QueueRow extends ThreadListItem {
+  subject_age_years: number | null;
+  patient_name: string;
+  ack_due_at: string | null;
+  first_message_at: string;
 }

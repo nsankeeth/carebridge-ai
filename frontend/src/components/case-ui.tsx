@@ -9,7 +9,7 @@ import { formatDate, HAPPY_PATH, STATUS_LABEL, STATUS_TONE, STEP_LABEL, type Ton
 import type { CaseStatus, Execution, Finding, Summary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const TONE_CLASS: Record<Tone, string> = {
+export const TONE_CLASS: Record<Tone, string> = {
   neutral: "bg-muted text-muted-foreground border-transparent",
   info: "bg-sky-100 text-sky-800 border-transparent dark:bg-sky-900/40 dark:text-sky-200",
   progress: "bg-cyan-100 text-cyan-900 border-transparent dark:bg-cyan-900/40 dark:text-cyan-200",

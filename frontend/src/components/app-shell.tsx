@@ -21,12 +21,12 @@ import type { Notification, Role } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const NAV: Record<Role, { href: string; label: string }[]> = {
-  PATIENT: [{ href: "/patient", label: "My cases" }, { href: "/patient/upload", label: "Upload report" }],
-  CLINICIAN: [{ href: "/clinician", label: "Assigned cases" }, { href: "/clinician/tasks", label: "Follow-ups" }],
+  PATIENT: [{ href: "/patient", label: "Home" }],
+  CLINICIAN: [{ href: "/clinician", label: "Queue" }, { href: "/clinician/tasks", label: "Follow-ups" }],
   ADMIN: [
     { href: "/admin", label: "Overview" },
     { href: "/admin/agent", label: "Agent & Meta AI" },
-    { href: "/admin/users", label: "Demo accounts" },
+    { href: "/admin/users", label: "Accounts" },
     { href: "/admin/audit", label: "Audit log" },
   ],
 };
