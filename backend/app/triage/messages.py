@@ -11,5 +11,6 @@ def post_message(db: Session, case: MedicalCase, author_type: MessageAuthor, bod
     m = Message(case_id=case.id, author_type=author_type, author_user_id=author.id if author else None, body=body, payload=payload, created_at=utcnow())
     db.add(m)
     db.flush()
-    case.messages.append(m) if m not in case.messages else None
+    if m not in case.messages:
+        case.messages.append(m)
     return m
