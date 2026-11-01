@@ -3,7 +3,12 @@
 from typing import Any
 
 from app import services
+from app.triage import content as _content
 from app.models import (
+    URGENCY_RANK,
+    HandoffStatus,
+    Message,
+    MessageAuthor,
     AgentExecution,
     AISummary,
     ExtractedFinding,
@@ -22,7 +27,8 @@ def iso(dt: Any) -> str | None:
 def user(u: User) -> dict[str, Any]:
     out = {"id": str(u.id), "email": u.email, "full_name": u.full_name, "role": u.role.value, "is_active": u.is_active}
     if u.clinician_profile:
-        out["clinician"] = {"id": str(u.clinician_profile.id), "specialty": u.clinician_profile.specialty, "clinic_name": u.clinician_profile.clinic_name}
+        cp = u.clinician_profile
+        out["clinician"] = {"id": str(cp.id), "specialty": cp.specialty, "clinic_name": cp.clinic_name, "on_call": cp.on_call, "on_call_priority": cp.on_call_priority}
     if u.patient_profile:
         out["patient"] = {"id": str(u.patient_profile.id), "province": u.patient_profile.province}
     return out
@@ -137,7 +143,7 @@ def _consent(case: MedicalCase) -> list[dict[str, Any]]:
         {
             "id": str(c.id),
             "status": c.status.value,
-            "clinician_name": c.clinician.user.full_name,
+            "clinician_name": c.clinician.user.full_name if c.clinician else "Your care team",
             "scope": c.scope,
             "purpose": c.purpose,
             "granted_at": iso(c.granted_at),
@@ -205,4 +211,127 @@ def clinician_case(case: MedicalCase, executions: list[AgentExecution]) -> dict[
         } if review else None,
         "tasks": [task(t) for t in case.tasks],
         "executions": _executions(case, executions),
+    }
+
+
+# --- Symptom threads ---------------------------------------------------------------
+
+def _age(dob: Any) -> float | None:
+    return round((services.now().date() - dob).days / 365.25, 1) if dob else None
+
+
+def thread_subject(case: MedicalCase) -> dict[str, Any]:
+    d = case.subject_dependent
+    if d:
+        return {"name": d.name, "relation": d.relation, "age_years": _age(d.date_of_birth), "dependent_id": str(d.id)}
+    p = case.patient
+    return {"name": p.user.full_name, "relation": "self", "age_years": _age(p.date_of_birth), "dependent_id": None}
+
+
+def message(m: Message) -> dict[str, Any]:
+    return {
+        "id": str(m.id),
+        "author_type": m.author_type.value,
+        "author_name": m.author.full_name if m.author and m.author_type == MessageAuthor.CLINICIAN else None,
+        "body": m.body,
+        "payload": m.payload,
+        "created_at": iso(m.created_at),
+    }
+
+
+def pending_questions(case: MedicalCase) -> list[dict[str, Any]]:
+    answered = {(m.payload or {}).get("question_id") for m in case.messages if (m.payload or {}).get("kind") == "answer"}
+    rounds = [m for m in case.messages if (m.payload or {}).get("kind") == "questions"]
+    if not rounds or case.urgency and case.urgency.value == "EMERGENCY":
+        return []
+    return [q for q in rounds[-1].payload["questions"] if q["id"] not in answered]
+
+
+def _care_team(case: MedicalCase) -> list[dict[str, Any]]:
+    return [
+        {"name": h.clinician.user.full_name, "status": h.status.value, "notified_at": iso(h.sent_at), "acknowledged_at": iso(h.acknowledged_at)}
+        for h in case.handoffs
+        if h.status != HandoffStatus.CANCELLED
+    ]
+
+
+def _attachments(case: MedicalCase, *, clinician: bool) -> list[dict[str, Any]]:
+    out = []
+    for d in case.documents:
+        out.append({"id": str(d.id), "filename": d.filename, "processing_status": d.processing_status.value if d.processing_status else None, "uploaded_at": iso(d.uploaded_at)})
+    if out and case.findings:
+        s = services.active_summary(case)
+        out[-1]["findings"] = [finding(f) for f in case.findings]
+        out[-1]["explanation"] = summary(s, clinician=False)["patient_explanation"] if s and not clinician else None
+    return out
+
+
+def thread_list_item(case: MedicalCase) -> dict[str, Any]:
+    last = case.messages[-1].created_at if case.messages else case.updated_at
+    return {
+        "id": str(case.id),
+        "kind": case.kind.value,
+        "title": case.title,
+        "subject_name": thread_subject(case)["name"],
+        "urgency": case.urgency.value if case.urgency else None,
+        "status": case.status.value,
+        "last_message_at": iso(last),
+        "created_at": iso(case.created_at),
+    }
+
+
+def patient_thread(case: MedicalCase) -> dict[str, Any]:
+    """Patient view. Never includes the clinician brief, model reasons, or possible causes."""
+    flags = list(dict.fromkeys(code for a in case.triage_assessments for code in a.rule_flags))
+    level = case.urgency
+    return {
+        **thread_list_item(case),
+        "subject": thread_subject(case),
+        "emergency": level is not None and level.value == "EMERGENCY",
+        "guidance": _content.GUIDANCE[level] if level else None,
+        "emergency_steps": _content.EMERGENCY_STEPS if level and level.value == "EMERGENCY" else [],
+        "worsening_signs": [_content.WORSENING_SIGNS[f] for f in flags if f in _content.WORSENING_SIGNS],
+        "care_team": _care_team(case),
+        "messages": [message(m) for m in case.messages],
+        "pending_questions": pending_questions(case),
+        "consent_active": services.active_consent(case) is not None,
+        "fallback_advised": case.fallback_advised_at is not None,
+        "attachments": _attachments(case, clinician=False),
+        "outcome": case.outcome,
+    }
+
+
+def clinician_thread(case: MedicalCase, handoff: Any) -> dict[str, Any]:
+    b = case.briefs[-1] if case.briefs else None
+    return {
+        **patient_thread(case),
+        "urgency_set_by": case.urgency_set_by,
+        "patient_name": case.patient.user.full_name,
+        "patient_phone": case.patient.user.phone,
+        "my_handoff": {"status": handoff.status.value, "ack_due_at": iso(handoff.ack_due_at), "sent_at": iso(handoff.sent_at)},
+        "brief": {
+            "version": b.version, "content": b.content, "validation_issues": b.validation_issues, "assessment": b.assessment.value if b.assessment else None,
+            "correction": b.correction, "model_id": b.model_id, "created_at": iso(b.created_at),
+        } if b else None,
+        "assessments": [
+            {"rule_level": a.rule_level.value if a.rule_level else None, "rule_flags": a.rule_flags, "model_level": a.model_level.value if a.model_level else None,
+             "model_flags": a.model_flags, "dropped_flags": a.dropped_flags, "reasons": a.reasons, "final_level": a.final_level.value if a.final_level else None,
+             "status": a.status, "created_at": iso(a.created_at)}
+            for a in case.triage_assessments
+        ],
+        "findings": [finding(f) for f in case.findings],
+        "outcome_note": case.outcome_note,
+    }
+
+
+def queue_row(case: MedicalCase, handoff: Any) -> dict[str, Any]:
+    subject = thread_subject(case)
+    first = case.messages[0].created_at if case.messages else case.created_at
+    return {
+        **thread_list_item(case),
+        "subject_age_years": subject["age_years"],
+        "patient_name": case.patient.user.full_name,
+        "ack_due_at": iso(handoff.ack_due_at) if handoff and handoff.status == HandoffStatus.SENT else None,
+        "first_message_at": iso(first),
+        "_rank": URGENCY_RANK[case.urgency] if case.urgency else -1,
     }

@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.errors import AppError, app_error_handler
-from app.routers import admin, agent, auth, clinician, patient
+from app.routers import admin, agent, auth, clinician, patient, threads
 from app.triage import scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -49,5 +49,5 @@ def health() -> dict:
     return {"ok": True}
 
 
-for r in (auth.router, patient.router, clinician.router, admin.router, agent.router):
+for r in (auth.router, patient.router, clinician.router, admin.router, agent.router, threads.patient_router, threads.clinician_router):
     app.include_router(r)

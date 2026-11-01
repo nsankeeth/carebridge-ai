@@ -27,10 +27,13 @@ from app.models import (
     AgentExecution,
     AISummary,
     CaseStatus,
+    DocumentStatus,
     ExecutionStatus,
     ExtractedFinding,
     FindingStatus,
     MedicalCase,
+    MedicalDocument,
+    MessageAuthor,
     ModelCall,
     SummaryStatus,
     User,
@@ -136,12 +139,29 @@ def _findings_payload(findings: list[FindingDraft]) -> list[dict[str, Any]]:
     ]
 
 
+def start_document_processing(db: Session, case: MedicalCase, document: MedicalDocument, actor: User | None) -> AgentExecution:
+    """Process a report attached to a symptom thread. Progress lives on the document; the thread's status is untouched."""
+    document.processing_status = DocumentStatus.PROCESSING
+    ex = AgentExecution(case_id=case.id, document_id=document.id, kind="PROCESSING", status=ExecutionStatus.RUNNING, steps=[])
+    db.add(ex)
+    db.flush()
+    audit.record(db, "agent.processing_started", "AgentExecution", ex.id, actor=actor, org_id=case.org_id, details={"case_id": str(case.id), "document_id": str(document.id)})
+    db.commit()
+    return ex
+
+
 def run_processing(execution_id: uuid.UUID) -> None:
     db = SessionLocal()
     try:
         _run_processing(db, execution_id)
+        ex = db.get(AgentExecution, execution_id)
+        symptom_case_id = ex.case_id if ex and ex.document_id and ex.status == ExecutionStatus.SUCCEEDED else None
     finally:
         db.close()
+    if symptom_case_id:
+        from app.triage import brief  # local import: triage depends on this module
+
+        brief.generate(symptom_case_id)
 
 
 def _run_processing(db: Session, execution_id: uuid.UUID) -> None:
@@ -156,7 +176,7 @@ def _run_processing(db: Session, execution_id: uuid.UUID) -> None:
         _fail(db, ex, case, StepFailed(str(e)))
         return
     run = _Run(db, ex, case, provider)
-    doc = case.documents[-1]
+    doc = db.get(MedicalDocument, ex.document_id) if ex.document_id else case.documents[-1]
 
     try:
         pages = run.step(
@@ -238,7 +258,13 @@ def _run_processing(db: Session, execution_id: uuid.UUID) -> None:
         )
         if issues:
             raise StepFailed(f"Generated summary failed validation: {feedback}", CaseStatus.NEEDS_CORRECTION)
-        workflow.transition(db, case, CaseStatus.SUMMARY_READY, actor_type="AGENT", reason="processing succeeded")
+        if ex.document_id:
+            from app.triage.messages import post_message
+
+            doc.processing_status = DocumentStatus.READY
+            post_message(db, case, MessageAuthor.AI, f"Your report {doc.filename} has been read and added for your care team.", {"kind": "report_ready", "document_id": str(doc.id)})
+        else:
+            workflow.transition(db, case, CaseStatus.SUMMARY_READY, actor_type="AGENT", reason="processing succeeded")
         ex.status = ExecutionStatus.SUCCEEDED
         ex.current_step = None
         ex.finished_at = datetime.now(timezone.utc)
@@ -288,7 +314,11 @@ def _fail(db: Session, ex: AgentExecution | None, case: MedicalCase | None, err:
     ex.status = ExecutionStatus.FAILED
     ex.error = str(err)[:1000]
     ex.finished_at = datetime.now(timezone.utc)
-    if case.status == CaseStatus.PROCESSING:
+    if ex.document_id:
+        doc = db.get(MedicalDocument, ex.document_id)
+        if doc:
+            doc.processing_status = DocumentStatus.FAILED
+    elif case.status == CaseStatus.PROCESSING:
         workflow.transition(db, case, err.target, actor_type="AGENT", reason=str(err)[:200])
     audit.record(db, "agent.processing_failed", "AgentExecution", ex.id, actor_type="AGENT", org_id=case.org_id, details={"case_id": str(case.id), "target": err.target.value})
     db.commit()

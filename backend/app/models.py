@@ -447,6 +447,7 @@ class Message(Base):
     payload: Mapped[dict[str, Any] | None] = mapped_column(JsonType)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     case: Mapped[MedicalCase] = relationship(back_populates="messages")
+    author: Mapped[User | None] = relationship()
 
 
 class TriageAssessment(Base):

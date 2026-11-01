@@ -83,7 +83,9 @@ def create_user(body: UserIn, user: User = Depends(admin_user), db: Session = De
 
 
 class UserPatch(BaseModel):
-    is_active: bool
+    is_active: bool | None = None
+    on_call: bool | None = None
+    on_call_priority: int | None = Field(default=None, ge=1, le=1000)
 
 
 @router.patch("/users/{user_id}")
@@ -91,11 +93,19 @@ def update_user(user_id: uuid.UUID, body: UserPatch, user: User = Depends(admin_
     target = db.get(User, user_id)
     if not target or target.org_id != user.org_id:
         raise NotFound("User not found")
-    if target.id == user.id:
-        raise Conflict("self_update", "You cannot deactivate yourself")
-    target.is_active = body.is_active
-    target.token_version += 1
-    audit.record(db, "admin.user_updated", "User", target.id, actor=user, details={"is_active": body.is_active})
+    if body.is_active is not None:
+        if target.id == user.id:
+            raise Conflict("self_update", "You cannot deactivate yourself")
+        target.is_active = body.is_active
+        target.token_version += 1
+    if body.on_call is not None or body.on_call_priority is not None:
+        if not target.clinician_profile:
+            raise Conflict("not_clinician", "Only clinicians can be put on call")
+        if body.on_call is not None:
+            target.clinician_profile.on_call = body.on_call
+        if body.on_call_priority is not None:
+            target.clinician_profile.on_call_priority = body.on_call_priority
+    audit.record(db, "admin.user_updated", "User", target.id, actor=user, details=body.model_dump(exclude_none=True))
     db.commit()
     return serializers.user(target)
 
