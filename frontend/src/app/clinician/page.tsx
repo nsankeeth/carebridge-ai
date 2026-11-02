@@ -1,31 +1,53 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { AlarmClock, ChevronRight, Inbox } from "lucide-react";
+import { AlarmClock, ChevronRight, FileText, Inbox, MessageCircleHeart, Timer } from "lucide-react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { StatusBadge } from "@/components/case-ui";
-import { Badge } from "@/components/ui/badge";
+import { UrgencyBadge } from "@/components/thread/urgency-card";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { relative } from "@/lib/format";
+import { ageLabel, relative } from "@/lib/format";
 import { api } from "@/lib/api";
-import type { CaseListItem, Task } from "@/lib/types";
+import type { QueueRow, Task } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-export default function ClinicianDashboard() {
-  const cases = useQuery({ queryKey: ["clinician-cases"], queryFn: () => api.get<CaseListItem[]>("/clinician/cases"), refetchInterval: 10_000 });
+function Countdown({ due }: { due: string | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!due) return null;
+  const ms = new Date(due).getTime() - now;
+  const mins = Math.floor(Math.abs(ms) / 60000);
+  const secs = Math.floor((Math.abs(ms) % 60000) / 1000);
+  const text = mins >= 120 ? `${Math.round(mins / 60)} h` : `${mins}:${String(secs).padStart(2, "0")}`;
+  return (
+    <span data-testid="ack-countdown" className={cn("flex items-center gap-1 font-mono text-xs", ms < 0 ? "text-red-600" : ms < 5 * 60000 ? "text-amber-700" : "text-muted-foreground")}>
+      <Timer className="size-3.5" /> {ms < 0 ? `overdue ${text}` : `respond in ${text}`}
+    </span>
+  );
+}
+
+export default function ClinicianQueue() {
+  const queue = useQuery({ queryKey: ["clinician-queue"], queryFn: () => api.get<QueueRow[]>("/clinician/queue"), refetchInterval: 5000 });
   const tasks = useQuery({ queryKey: ["clinician-tasks"], queryFn: () => api.get<Task[]>("/clinician/tasks"), refetchInterval: 15_000 });
   const openTasks = tasks.data?.filter((t) => t.status === "OPEN") ?? [];
-  const waiting = cases.data?.filter((c) => c.status === "HANDOFF_SENT").length ?? 0;
+  const rows = queue.data ?? [];
+  const waiting = rows.filter((r) => r.ack_due_at).length;
+  const urgent = rows.filter((r) => r.urgency === "URGENT" || r.urgency === "EMERGENCY").length;
 
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">Assigned cases</h1>
-        <p className="text-muted-foreground">Cases patients have explicitly consented to share with you.</p>
+        <h1 className="text-2xl font-semibold">Queue</h1>
+        <p className="text-muted-foreground">Patients who need you, most urgent first.</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Awaiting acknowledgment" value={waiting} />
-        <Stat label="Active cases" value={cases.data?.filter((c) => ["ACKNOWLEDGED", "UNDER_REVIEW"].includes(c.status)).length ?? 0} />
+        <Stat label="Urgent or emergency" value={urgent} />
+        <Stat label="Waiting for you to acknowledge" value={waiting} />
         <Stat label="Open follow-ups" value={openTasks.length} />
       </div>
 
@@ -52,25 +74,33 @@ export default function ClinicianDashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Inbox</CardTitle>
-          <CardDescription>AI summaries are drafts for your review. You remain responsible for all clinical decisions.</CardDescription>
+          <CardTitle>Patients</CardTitle>
+          <CardDescription>AI briefs and summaries are drafts for your review. You remain responsible for all clinical decisions.</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {cases.isLoading ? (
+          {queue.isLoading ? (
             <Skeleton className="m-6 h-20" />
-          ) : cases.data?.length ? (
+          ) : rows.length ? (
             <ul className="divide-y" data-testid="clinician-case-list">
-              {cases.data.map((c) => (
-                <li key={c.id}>
-                  <Link href={`/clinician/cases/${c.id}`} className="flex items-center gap-4 px-6 py-4 transition hover:bg-muted/50">
+              {rows.map((r) => (
+                <li key={r.id} data-testid="queue-row" data-urgency={r.urgency ?? ""}>
+                  <Link
+                    href={r.kind === "SYMPTOM" ? `/clinician/threads/${r.id}` : `/clinician/cases/${r.id}`}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-4 transition hover:bg-muted/50 sm:px-6"
+                  >
+                    {r.kind === "SYMPTOM" ? <MessageCircleHeart className="size-5 shrink-0 text-primary" /> : <FileText className="size-5 shrink-0 text-primary" />}
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium">
-                        {c.patient_name} <span className="font-normal text-muted-foreground">· {c.title}</span>
+                      <p className="truncate font-medium">
+                        {r.subject_name}
+                        {r.subject_age_years != null && <span className="font-normal text-muted-foreground"> ({ageLabel(r.subject_age_years)})</span>}
+                        <span className="font-normal text-muted-foreground"> · {r.title}</span>
                       </p>
-                      <p className="text-sm text-muted-foreground">Received {relative(c.handoff?.sent_at)}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {r.subject_name !== r.patient_name && `Parent: ${r.patient_name} · `}first message {relative(r.first_message_at)}
+                      </p>
                     </div>
-                    {c.status === "HANDOFF_SENT" && <Badge variant="destructive">New</Badge>}
-                    <StatusBadge status={c.status} />
+                    <Countdown due={r.ack_due_at} />
+                    {r.kind === "SYMPTOM" ? <UrgencyBadge level={r.urgency} /> : <StatusBadge status={r.status} />}
                     <ChevronRight className="size-4 text-muted-foreground" />
                   </Link>
                 </li>
@@ -78,7 +108,7 @@ export default function ClinicianDashboard() {
             </ul>
           ) : (
             <div className="flex flex-col items-center gap-2 p-10 text-muted-foreground">
-              <Inbox className="size-8" /> No cases have been shared with you.
+              <Inbox className="size-8" /> Nothing waiting for you.
             </div>
           )}
         </CardContent>

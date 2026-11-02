@@ -39,6 +39,11 @@ export default function UsersPage() {
     },
     onError,
   });
+  const onCall = useMutation({
+    mutationFn: (u: User) => api.patch(`/admin/users/${u.id}`, { on_call: !u.clinician?.on_call }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
+    onError,
+  });
   const toggle = useMutation({
     mutationFn: (u: User) => api.patch(`/admin/users/${u.id}`, { is_active: !u.is_active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-users"] }),
@@ -66,13 +71,23 @@ export default function UsersPage() {
                 <TableRow key={u.id}>
                   <TableCell>
                     {u.full_name}
-                    {u.clinician && <span className="block text-xs text-muted-foreground">{u.clinician.specialty}</span>}
+                    {u.clinician && (
+                      <span className="block text-xs text-muted-foreground">
+                        {u.clinician.specialty}
+                        {u.clinician.on_call && <Badge className="ml-1 h-4 text-[10px]">on call · #{u.clinician.on_call_priority}</Badge>}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm">{u.email}</TableCell>
                   <TableCell>
                     <Badge variant="outline">{u.role.toLowerCase()}</Badge>
                   </TableCell>
                   <TableCell className="text-right">
+                    {u.clinician && (
+                      <Button size="sm" variant="ghost" data-testid={`on-call-${u.email}`} onClick={() => onCall.mutate(u)}>
+                        {u.clinician.on_call ? "Take off call" : "Put on call"}
+                      </Button>
+                    )}
                     {u.id !== me.data?.id && (
                       <Button size="sm" variant="ghost" onClick={() => toggle.mutate(u)}>
                         {u.is_active ? "Deactivate" : "Activate"}
@@ -87,7 +102,7 @@ export default function UsersPage() {
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Add demo account</CardTitle>
+          <CardTitle>Add account</CardTitle>
         </CardHeader>
         <CardContent>
           <form className="space-y-3" onSubmit={form.handleSubmit((v) => create.mutate(v))} noValidate>
