@@ -41,8 +41,8 @@ def _lv(level: Urgency, bands: tuple[str, ...] = ALL) -> dict[str, Urgency]:
 
 
 RULES: list[_Rule] = [
-    _Rule("breathing_difficulty", "Difficulty breathing", (r"can'?t breathe|cannot breathe|(?:trouble|difficulty|hard time|struggling) breathing|short(?:ness)? of breath|gasping|breathing (?:very )?(?:fast|hard|heavily)",), _lv(E)),
-    _Rule("chest_pain", "Chest pain or pressure", (r"chest (?:pain|pressure|tightness)|crushing (?:chest )?pain|pain in (?:my|his|her|their) chest",), _lv(E)),
+    _Rule("breathing_difficulty", "Difficulty breathing", (r"can'?t breathe|cannot breathe|(?:trouble|difficulty|hard time|struggling) (?:to )?breath(?:e|ing)|short(?:ness)? of breath|can'?t catch (?:my|his|her|their) breath|gasping|breathing (?:very )?(?:fast|hard|heavily)",), _lv(E)),
+    _Rule("chest_pain", "Chest pain or pressure", (r"chest (?:pain|pressure|tightness)|crushing (?:chest )?pain|(?:pain|pressure|tightness) in (?:my|his|her|their|the) chest",), _lv(E)),
     _Rule("hard_to_wake", "Hard to wake or unresponsive", (r"hard to wake|can'?t (?:wake|be woken)|won'?t wake|unresponsive|not responding|passed out|unconscious|fainted",), _lv(E)),
     _Rule("seizure", "Seizure", (r"seizure|convuls\w*|shaking uncontrollably",), _lv(E)),
     _Rule("stroke_signs", "Possible stroke signs", (r"face (?:is )?droop\w*|drooping (?:face|on one side)|slurred speech|speech is slurred|sudden weakness|one side (?:of (?:my|his|her|their) body )?(?:is |feels )?(?:weak|numb)",), _lv(E)),

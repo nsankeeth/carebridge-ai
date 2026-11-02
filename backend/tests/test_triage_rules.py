@@ -43,6 +43,10 @@ def test_example_with_hard_to_wake_answer_is_emergency():
         ("I have had a runny nose and a cough", 40, None),
         ("she hasn't peed since this morning and has no tears when crying", 1, Urgency.EMERGENCY),
         ("my toddler won't drink anything", 2, Urgency.URGENT),
+        # Found by the live eval: rules missed these phrasings (Meta caught them).
+        ("I have crushing pressure in my chest spreading to my left arm", 58, Urgency.EMERGENCY),
+        ("his puffer isn't helping and he's struggling to breathe", 9, Urgency.EMERGENCY),
+        ("she can't catch her breath", 30, Urgency.EMERGENCY),
     ],
 )
 def test_vignettes(text, age, expected):
