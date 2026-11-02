@@ -1,6 +1,5 @@
 """Clinician-only triage brief, drafted by Meta and grounded in the patient's own words."""
 
-import json
 import uuid
 
 from sqlalchemy.orm import Session

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from app import services, storage
+from app import services, storage, workflow
 from app.agent import pipeline
 from app.config import get_settings
 from app.db import Base, SessionLocal
@@ -22,8 +22,10 @@ from app.models import (
     AgentExecution,
     CaseStatus,
     ClinicianProfile,
+    Dependent,
     MedicalCase,
     MedicalDocument,
+    MessageAuthor,
     NextStep,
     Organization,
     PatientProfile,
@@ -32,6 +34,8 @@ from app.models import (
     UserRole,
 )
 from app.security import hash_password
+from app.triage import engine, routing
+from app.triage.messages import post_message
 
 DEMO_PASSWORD = os.environ.get("DEMO_PASSWORD", "CareBridge-Demo-2026")
 
@@ -39,7 +43,8 @@ USERS = [
     ("maya.thompson@patient.demo", "Maya Thompson", UserRole.PATIENT, {"dob": date(1988, 4, 12), "ref": "SYN-ON-4471-0092"}),
     ("daniel.okafor@patient.demo", "Daniel Okafor", UserRole.PATIENT, {"dob": date(1971, 11, 3), "ref": "SYN-ON-8820-1157"}),
     ("dr.raman@clinic.demo", "Dr. Priya Raman", UserRole.CLINICIAN, {"specialty": "Family Medicine", "clinic": "Lakeshore Family Health Team"}),
-    ("dr.tremblay@clinic.demo", "Dr. Marc Tremblay", UserRole.CLINICIAN, {"specialty": "Internal Medicine", "clinic": "Riverside Internal Medicine"}),
+    ("dr.tremblay@clinic.demo", "Dr. Marc Tremblay", UserRole.CLINICIAN, {"specialty": "Internal Medicine", "clinic": "Riverside Internal Medicine", "on_call": 1}),
+    ("dr.chen@clinic.demo", "Dr. Lily Chen", UserRole.CLINICIAN, {"specialty": "Family Medicine", "clinic": "Lakeshore Family Health Team", "on_call": 2}),
     ("admin@carebridge.demo", "Jordan Lee", UserRole.ADMIN, {}),
 ]
 
@@ -72,17 +77,27 @@ def main() -> int:
     db.flush()
     users: dict[str, User] = {}
     for email, name, role, extra in USERS:
-        u = User(org_id=org.id, email=email, full_name=name, role=role, password_hash=hash_password(DEMO_PASSWORD))
+        # Fictional 555-01xx numbers, reserved for fiction.
+        u = User(org_id=org.id, email=email, full_name=name, role=role, password_hash=hash_password(DEMO_PASSWORD), phone=f"416-555-01{len(users):02d}")
         db.add(u)
         db.flush()
         if role == UserRole.PATIENT:
             db.add(PatientProfile(user_id=u.id, date_of_birth=extra["dob"], province="ON", synthetic_health_ref=extra["ref"]))
         elif role == UserRole.CLINICIAN:
-            db.add(ClinicianProfile(user_id=u.id, specialty=extra["specialty"], clinic_name=extra["clinic"], synthetic_license_ref=f"SYN-CPSO-{len(users):04d}"))
+            db.add(ClinicianProfile(
+                user_id=u.id, specialty=extra["specialty"], clinic_name=extra["clinic"], synthetic_license_ref=f"SYN-CPSO-{len(users):04d}",
+                on_call="on_call" in extra, on_call_priority=extra.get("on_call", 100),
+            ))
         users[email] = u
     db.commit()
     for u in users.values():
         db.refresh(u)
+    maya, daniel = users["maya.thompson@patient.demo"], users["daniel.okafor@patient.demo"]
+    maya.patient_profile.primary_clinician_id = users["dr.raman@clinic.demo"].clinician_profile.id
+    daniel.patient_profile.primary_clinician_id = users["dr.tremblay@clinic.demo"].clinician_profile.id
+    ava = Dependent(patient_id=maya.patient_profile.id, name="Ava Thompson", date_of_birth=date.today() - timedelta(days=4 * 365 + 120), relation="daughter")
+    db.add(ava)
+    db.commit()
 
     reports = {r.slug: r for r in REPORTS}
     patient_by_name = {u.full_name: u for u in users.values() if u.role == UserRole.PATIENT}
@@ -107,9 +122,42 @@ def main() -> int:
             continue
         _advance(db, case, patient, users.get(clinician_email) if clinician_email else None, target)
         print(f"  {slug}: {case.status.value}")
+    _seed_threads(db, users, ava)
     db.close()
     print(f"\nSeeded. Demo password for all accounts: see DEMO_PASSWORD in app/seed.py")
     return 0
+
+
+AVA_MESSAGE = (
+    "My 4-year-old daughter started vomiting unexpectedly about four hours ago. She has thrown up three times since then "
+    "and is refusing to drink any water or apple juice because she says her tummy hurts. She is very lethargic and just "
+    "wants to sleep. I checked her temperature and she has a mild fever of 100.4°F."
+)
+DANIEL_MESSAGE = "I've had a dry cough for about two weeks. No fever, I'm sleeping and eating fine. Should someone take a look?"
+
+
+def _thread(db, user: User, text: str, dependent: Dependent | None = None) -> MedicalCase:
+    case, a = engine.start_thread(db, user, text, dependent.id if dependent else None)
+    db.commit()
+    engine.run_model_triage(a.id)  # also drafts the clinician brief
+    db.expire_all()
+    return db.get(MedicalCase, case.id)
+
+
+def _seed_threads(db, users: dict[str, User], ava: Dependent) -> None:
+    print("triaging Ava's thread …", flush=True)
+    case = _thread(db, users["maya.thompson@patient.demo"], AVA_MESSAGE, ava)
+    due = min((h.ack_due_at for h in case.handoffs if h.ack_due_at), default=None)
+    print(f"  ava: {case.urgency.value if case.urgency else None}, {case.status.value}, respond by {due}")
+    print("triaging Daniel's thread …", flush=True)
+    case = _thread(db, users["daniel.okafor@patient.demo"], DANIEL_MESSAGE)
+    clinician = users["dr.tremblay@clinic.demo"]
+    handoff = next(h for h in case.handoffs if h.clinician_id == clinician.clinician_profile.id)
+    routing.acknowledge(db, case, handoff, clinician)
+    post_message(db, case, MessageAuthor.CLINICIAN, "Thanks Daniel. Let's book you in this week so I can listen to your chest. The clinic will call you to schedule.", {"kind": "clinician_reply"}, author=clinician)
+    workflow.transition(db, case, CaseStatus.IN_CONVERSATION, actor=clinician)
+    db.commit()
+    print(f"  daniel: {case.urgency.value if case.urgency else None}, {case.status.value}")
 
 
 def _advance(db, case: MedicalCase, patient: User, clinician: User | None, target: str) -> None:

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 
@@ -16,14 +17,15 @@ async function signOut(page: Page) {
 }
 
 test("patient → AI explanation → consent → handoff → clinician review → patient sees outcome", async ({ page }) => {
-  // 1–2. Patient signs in and uploads a sample report.
+  // 1–2. Patient signs in and uploads a sample report as a standalone report case.
+  // (The upload page was replaced by attachments in symptom threads; the report-case API remains.)
   await signInAs(page, "patient");
-  await page.getByRole("link", { name: "Upload a report" }).click();
   const title = `E2E lipids ${Date.now()}`;
-  await page.getByLabel("Report name").fill(title);
-  await page.locator("#file").setInputFiles(REPORT);
-  await page.getByRole("button", { name: "Upload and analyze" }).click();
-  await expect(page).toHaveURL(/\/patient\/cases\/[0-9a-f-]+$/);
+  const uploaded = await page.request.post("/api/patient/cases/upload", {
+    multipart: { title, file: { name: "lipids.pdf", mimeType: "application/pdf", buffer: fs.readFileSync(REPORT) } },
+  });
+  expect(uploaded.status()).toBe(201);
+  await page.goto(`/patient/cases/${(await uploaded.json()).case.id}`);
   const caseUrl = page.url();
 
   // 3. Wait for the processing agent.

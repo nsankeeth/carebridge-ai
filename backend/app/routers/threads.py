@@ -17,14 +17,11 @@ from app.models import (
     CaseKind,
     CaseStatus,
     ClinicalHandoff,
-    ConsentStatus,
-    Dependent,
     HandoffStatus,
     MedicalCase,
     MedicalDocument,
     MessageAuthor,
     NextStep,
-    PatientConsent,
     SummaryAssessment,
     ThreadOutcome,
     Urgency,
@@ -38,8 +35,6 @@ from app.triage.messages import post_message
 patient_router = APIRouter(prefix="/api/patient", tags=["threads"])
 clinician_router = APIRouter(prefix="/api/clinician", tags=["threads"])
 
-CARE_TEAM_SCOPE = ["symptom_thread", "attachments"]
-CARE_TEAM_PURPOSE = "So your family doctor and on-call clinicians can see this conversation and anything you attach, and respond."
 Body = Field(min_length=1, max_length=4000)
 
 
@@ -76,23 +71,7 @@ class ThreadIn(BaseModel):
 
 @patient_router.post("/threads", status_code=201)
 def create_thread(body: ThreadIn, background: BackgroundTasks, user: User = Depends(patient_user), db: Session = Depends(get_db)) -> dict:
-    profile = user.patient_profile
-    if body.subject_dependent_id:
-        dep = db.get(Dependent, body.subject_dependent_id)
-        if not dep or dep.patient_id != profile.id:
-            raise NotFound("Dependent not found")
-    text = body.body.strip()
-    case = MedicalCase(org_id=user.org_id, patient_id=profile.id, title=text[:60], kind=CaseKind.SYMPTOM, status=CaseStatus.INTAKE, subject_dependent_id=body.subject_dependent_id)
-    db.add(case)
-    db.flush()
-    audit.record(db, "case.created", "MedicalCase", case.id, actor=user, details={"kind": "SYMPTOM"})
-    consent = PatientConsent(case_id=case.id, patient_id=profile.id, clinician_id=None, audience="CARE_TEAM", scope=CARE_TEAM_SCOPE, purpose=CARE_TEAM_PURPOSE, status=ConsentStatus.GRANTED)
-    db.add(consent)
-    db.flush()
-    audit.record(db, "consent.granted", "PatientConsent", consent.id, actor=user, details={"case_id": str(case.id), "audience": "CARE_TEAM", "scope": CARE_TEAM_SCOPE})
-    db.refresh(case)
-    msg = post_message(db, case, MessageAuthor.PATIENT, text, author=user)
-    a = engine.intake(db, case, msg)
+    case, a = engine.start_thread(db, user, body.body, body.subject_dependent_id)
     db.commit()
     background.add_task(engine.run_model_triage, a.id)
     return {"thread": serializers.patient_thread(case)}

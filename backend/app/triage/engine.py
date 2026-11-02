@@ -12,8 +12,8 @@ from app import audit, workflow
 from app.ai import prompts
 from app.ai.schemas import TriageModelOutput
 from app.db import SessionLocal
-from app.errors import Conflict
-from app.models import CaseStatus, MedicalCase, Message, MessageAuthor, TriageAssessment, Urgency, User, max_urgency
+from app.errors import Conflict, NotFound
+from app.models import CaseKind, CaseStatus, ConsentStatus, Dependent, MedicalCase, PatientConsent, Message, MessageAuthor, TriageAssessment, Urgency, User, max_urgency
 from app.services import now
 from app.triage import brief, content, questions, routing, rules
 from app.triage.grounding import patient_corpus, patient_text_issues, split_grounded
@@ -189,3 +189,28 @@ def answer(db: Session, case: MedicalCase, question_id: str, option: str, actor:
         raise Conflict("already_answered", "This question has already been answered")
     m = post_message(db, case, MessageAuthor.PATIENT, option, {"kind": "answer", "question_id": question_id, "answer": option}, author=actor)
     return intake(db, case, m)
+
+
+CARE_TEAM_SCOPE = ["symptom_thread", "attachments"]
+CARE_TEAM_PURPOSE = "So your family doctor and on-call clinicians can see this conversation and anything you attach, and respond."
+
+
+def start_thread(db: Session, user: User, text: str, dependent_id: uuid.UUID | None) -> tuple[MedicalCase, TriageAssessment]:
+    """Create a symptom thread with care-team consent and run the synchronous rules pass. Caller commits."""
+    profile = user.patient_profile
+    if dependent_id:
+        dep = db.get(Dependent, dependent_id)
+        if not dep or dep.patient_id != profile.id:
+            raise NotFound("Dependent not found")
+    text = text.strip()
+    case = MedicalCase(org_id=user.org_id, patient_id=profile.id, title=text[:60], kind=CaseKind.SYMPTOM, status=CaseStatus.INTAKE, subject_dependent_id=dependent_id)
+    db.add(case)
+    db.flush()
+    audit.record(db, "case.created", "MedicalCase", case.id, actor=user, details={"kind": "SYMPTOM"})
+    consent = PatientConsent(case_id=case.id, patient_id=profile.id, clinician_id=None, audience="CARE_TEAM", scope=CARE_TEAM_SCOPE, purpose=CARE_TEAM_PURPOSE, status=ConsentStatus.GRANTED)
+    db.add(consent)
+    db.flush()
+    audit.record(db, "consent.granted", "PatientConsent", consent.id, actor=user, details={"case_id": str(case.id), "audience": "CARE_TEAM", "scope": CARE_TEAM_SCOPE})
+    db.refresh(case)
+    msg = post_message(db, case, MessageAuthor.PATIENT, text, author=user)
+    return case, intake(db, case, msg)
