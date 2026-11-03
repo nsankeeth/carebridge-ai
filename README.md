@@ -2,8 +2,10 @@
 
 AI medical navigation and clinician handoff agent, powered by Meta models.
 
-Patient uploads a lab PDF → Meta model extracts and explains it → patient consents → coordinator agent hands it to
-a clinician via tools → clinician reviews → follow-up agent chases open items → everything audited.
+A patient or parent describes what's wrong → red-flag rules and a Meta model set the urgency (Call 911 immediately
+when it may be an emergency) → the family doctor and on-call clinicians are paged and escalated until someone
+responds → the clinician reads a grounded Meta-drafted brief and replies or calls. Lab PDFs attached in a thread are
+read and explained by Meta, every value checked against the PDF. Everything is audited.
 
 ## Quick start
 
@@ -22,7 +24,7 @@ Verify real Meta inference (structured output + tool calling):
 cd backend && .venv/bin/python -m app.verify_meta
 ```
 
-Seed demo data (runs the real Meta pipeline on 5 reports):
+Seed synthetic data (runs the real Meta pipeline on 5 reports and 2 symptom threads; requires `MODEL_API_KEY`):
 
 ```bash
 cd backend && .venv/bin/python -m app.seed
@@ -38,8 +40,14 @@ Run:
 ./scripts/dev-frontend.sh
 ```
 
-Open http://localhost:3000. The login page has one-click demo accounts (patient, clinician, admin);
+Open http://localhost:3000. The login page has one-click synthetic demo accounts (patient, clinician, admin);
 the shared demo password is `DEMO_PASSWORD` in `backend/app/seed.py`. API docs: http://localhost:8000/docs.
+
+Live triage evaluation on 15 synthetic vignettes:
+
+```bash
+cd backend && .venv/bin/python -m app.triage.eval
+```
 
 ## Tests
 

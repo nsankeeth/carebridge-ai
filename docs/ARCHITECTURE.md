@@ -1,7 +1,9 @@
 # CareBridge Architecture
 
-CareBridge is a medical navigation and clinician handoff agent. A patient uploads a lab report; Meta models
-extract and explain it; with explicit consent, an agent hands it to a clinician and tracks the case to closure.
+CareBridge is a medical navigation and clinician handoff agent. A patient (or a parent) describes what's wrong in a
+thread; deterministic red-flag rules and a Meta model set the urgency, the right clinicians are paged and escalated
+until someone responds, and the clinician gets a grounded Meta-drafted brief and can reply or call. Lab reports are
+attached inside a thread (or shared as a standalone report case), where Meta models extract and explain them.
 
 ## Components
 
@@ -44,11 +46,16 @@ flowchart LR
 | 3 | Clinician handoff summary | step `meta_clinician_summary` | structured output | `ClinicianSummary` |
 | 4 | Agent reasoning (which tools to run) | `agent/coordinator.py` | Chat Completions + `tools` (function calling) | tool calls, validated per tool |
 | 5 | Follow-up coordination | `agent/coordinator.py` mode `FOLLOW_UP` | tool calling; the model writes the admin messages | `create_follow_up_task`, `notify_*` args |
+| 6 | Symptom triage: urgency, red flags, follow-up questions, acknowledgement | `triage/engine.py` | structured output | `TriageModelOutput` |
+| 7 | Clinician triage brief: possible causes, questions, next steps, treatment draft | `triage/brief.py` | structured output | `ClinicianTriageBrief` |
 
 The integration (`ai/provider.py`) uses the OpenAI-compatible Python SDK pointed at Meta's endpoint, as documented
 at dev.meta.ai (quickstart, structured output, tool calling, models pages). The same Pydantic class generates the
 JSON Schema sent to Meta and validates the reply. Every call writes a `model_calls` row: model id returned by the
 API, status, latency, input/output/total tokens, and response id. It's visible under **Admin → Agent & Meta AI**.
+
+Meta is the only provider. Without `MODEL_API_KEY` the pipeline fails with a clear error rather than falling back to
+canned output. Automated tests use a deterministic test double (`backend/tests/fake_outputs.py`) so they run offline.
 
 ## Deterministic vs. model responsibilities
 
@@ -88,18 +95,38 @@ The model can't change case status. Status changes happen only in `workflow.tran
 after their own checks. Tool errors are returned to the model as data; the prompt forbids working around them. If a
 HANDOFF run ends without a handoff, the run is marked failed and can be retried. It doesn't quietly succeed.
 
+## Symptom threads
+
+1. `POST /api/patient/threads` creates a `SYMPTOM` case with care-team consent and the first message, then runs the
+   **rules pass** synchronously (`triage/rules.py`, no model). An EMERGENCY result posts the 911 template in the same
+   response.
+2. A background task runs **Meta triage** (`engine.run_model_triage`): grounded red flags, final level =
+   max(rules, Meta), the fixed guidance for that level plus Meta's acknowledgement, up to 3 tap questions per round
+   (bank questions first), then the **clinician brief** (`triage/brief.py`).
+3. **Routing** (`triage/routing.py`) pages the family doctor and/or on-call clinicians per level, one
+   `ClinicalHandoff` each, with an `ack_due_at`. An asyncio **scheduler** runs `routing.sweep` every 60 s to escalate
+   overdue pages and post the urgent-care fallback. No model is involved in who is paged or when.
+4. The clinician acknowledges, replies (shown to the patient), calls, changes the urgency with a reason, records an
+   outcome, and closes. PDFs attached in the thread run through the report pipeline with progress on the document,
+   and their findings feed the brief.
+
+Measured on live `muse-spark-1.3`: the triage call takes ~35 s and the brief ~30 s; the rules pass and paging are
+immediate.
+
 ## Case state machine
 
 `UPLOADED → PROCESSING → SUMMARY_READY → AWAITING_CONSENT → CONSENT_GRANTED → HANDOFF_SENT → ACKNOWLEDGED →
 UNDER_REVIEW → REVIEW_COMPLETED → CLOSED`, plus `PROCESSING_FAILED`, `NEEDS_CORRECTION`, `CONSENT_WITHDRAWN`,
-`HANDOFF_CANCELLED`. The full table is `TRANSITIONS` in `backend/app/workflow.py`. Every transition is audited.
+`HANDOFF_CANCELLED`. Symptom threads: `INTAKE → TRIAGED → HANDOFF_SENT → ACKNOWLEDGED → IN_CONVERSATION → CLOSED`.
+The full table is `TRANSITIONS` in `backend/app/workflow.py`. Every transition is audited.
 
 ## Data model
 
 Organization, User, PatientProfile, ClinicianProfile, MedicalCase, MedicalDocument, ExtractedFinding, AISummary,
-PatientConsent, ClinicalHandoff, ClinicalReview, FollowUpTask, Notification, AuditEvent, AgentExecution, ModelCall.
-UUID keys, FKs, indexes, `uq_handoff_consent` (one handoff per consent), unique `follow_up_tasks.dedupe_key`.
-Migration: `backend/migrations/versions/*_initial_schema.py`.
+PatientConsent, ClinicalHandoff, ClinicalReview, FollowUpTask, Notification, AuditEvent, AgentExecution, ModelCall,
+plus Dependent, Message, TriageAssessment, ClinicianBrief for symptom threads. UUID keys, FKs, indexes,
+`uq_handoff_consent_clinician` (one handoff per consent and clinician), unique `follow_up_tasks.dedupe_key`.
+Migrations: `backend/migrations/versions/`.
 
 ## API
 
