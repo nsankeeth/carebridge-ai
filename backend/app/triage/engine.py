@@ -4,13 +4,15 @@ The level of a thread only ever goes up here. A clinician's change (made through
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, workflow
 from app.ai import prompts
 from app.ai.schemas import TriageModelOutput
+from app.config import get_settings
 from app.db import SessionLocal
 from app.errors import Conflict, NotFound
 from app.models import CaseKind, CaseStatus, ConsentStatus, Dependent, MedicalCase, PatientConsent, Message, MessageAuthor, TriageAssessment, Urgency, User, max_urgency
@@ -62,6 +64,7 @@ def _guidance(level: Urgency, flags: list[str], tips: list[str], ack: str | None
 
 def intake(db: Session, case: MedicalCase, message: Message) -> TriageAssessment:
     """Synchronous rules pass for a new patient message or answer. Never calls a model."""
+    case = lock_case(db, case.id)
     is_answer = (message.payload or {}).get("kind") == "answer"
     result = rules.evaluate("" if is_answer else message.body, _answers(case), subject_age(case, now().date()))
     baseline = set(case.urgency_baseline_flags or [])
@@ -103,24 +106,51 @@ def run_model_triage(assessment_id: uuid.UUID) -> None:
         brief.generate(case_id)
 
 
+def lock_case(db: Session, case_id: uuid.UUID) -> MedicalCase:
+    """Row-lock the case and reload it, so concurrent requests and background runs see each other's commits."""
+    db.flush()
+    case = db.scalar(select(MedicalCase).where(MedicalCase.id == case_id).with_for_update().execution_options(populate_existing=True))
+    for rel in ("messages", "triage_assessments", "handoffs", "consents"):
+        db.expire(case, [rel])
+    return case
+
+
+def _patient_flags(case: MedicalCase, age: float | None) -> list[str]:
+    text = " ".join(m.body for m in case.messages if m.author_type == MessageAuthor.PATIENT and not m.payload)
+    return [f.code for f in rules.evaluate(text, _answers(case), age).flags]
+
+
 def _run_model_triage(db: Session, assessment_id: uuid.UUID) -> uuid.UUID | None:
     a = db.get(TriageAssessment, assessment_id)
     if not a or a.status != "rules_only":
         return None
-    case = db.get(MedicalCase, a.case_id)
+    case_id = a.case_id
+    case = db.get(MedicalCase, case_id)
     if case.status in (CaseStatus.CONSENT_WITHDRAWN, CaseStatus.CLOSED):
         return None
+
+    # 1. Model calls on a snapshot, holding no lock (they take tens of seconds).
     age = subject_age(case, now().date())
     corpus = patient_corpus(case.messages)
-    all_flags = [f.code for f in rules.evaluate(" ".join(m.body for m in case.messages if m.author_type == MessageAuthor.PATIENT and not m.payload), _answers(case), age).flags]
     system = prompts.triage_system(list(content.CARE_TIPS), list(questions.BANK))
-    user = _prompt(case, age, all_flags)
+    user = _prompt(case, age, _patient_flags(case, age))
     ctx = {"corpus": corpus, "rule_level": a.rule_level.value if a.rule_level else None}
     out, calls = call_structured(db, case, "triage_assessment", system, user, TriageModelOutput, ctx)
-    a.model_call_ids = [str(c.id) for c in calls]
-    clinician_set = case.urgency_set_by == "clinician"
+    ack = out.acknowledgement if out else None
+    if ack and patient_text_issues(ack, corpus):
+        retry, more = call_structured(db, case, "triage_assessment", system, user + "\n\nThe acknowledgement was rejected for unsafe wording. Rewrite it following the rules.", TriageModelOutput, ctx)
+        calls += more
+        ack = retry.acknowledgement if retry and not patient_text_issues(retry.acknowledgement, corpus) else None
 
-    ack, tips, model_questions = None, [], []
+    # 2. Apply against fresh, locked state: a newer message or a clinician may have changed the case meanwhile.
+    case = lock_case(db, case_id)
+    a = db.get(TriageAssessment, assessment_id)
+    a.model_call_ids = [str(c.id) for c in calls]
+    if case.status in (CaseStatus.CONSENT_WITHDRAWN, CaseStatus.CLOSED):
+        a.status = "complete" if out else "model_failed"
+        return None
+    clinician_set = case.urgency_set_by == "clinician"
+    tips, model_questions = [], []
     if out is None:
         a.status = "model_failed"
         if case.urgency is None and a.rule_level is None:
@@ -143,20 +173,32 @@ def _run_model_triage(db: Session, assessment_id: uuid.UUID) -> uuid.UUID | None
         if level is None:
             level, source = case.urgency or Urgency.SOON, case.urgency_set_by or "fallback"
         _raise_level(db, case, level, source)
-        ack = out.acknowledgement
-        if patient_text_issues(ack, corpus):
-            retry, more = call_structured(db, case, "triage_assessment", system, user + "\n\nThe acknowledgement was rejected for unsafe wording. Rewrite it following the rules.", TriageModelOutput, ctx)
-            a.model_call_ids += [str(c.id) for c in more]
-            ack = retry.acknowledgement if retry and not patient_text_issues(retry.acknowledgement, corpus) else None
         tips = [t for t in out.care_tip_ids if t in content.CARE_TIPS]
         model_questions = out.follow_up_questions
     a.final_level = case.urgency
 
     level = case.urgency
+    all_flags = _patient_flags(case, age)
     if level != Urgency.EMERGENCY or ack:
         post_message(db, case, MessageAuthor.AI, _guidance(level, all_flags, tips, ack), {"kind": "guidance", "level": level.value, "care_tip_ids": tips})
-    _ask(db, case, all_flags, age, model_questions, corpus)
+    _ask(db, case, all_flags, age, model_questions, patient_corpus(case.messages))
     return case.id
+
+
+def recover_stale_intake(db: Session, at: datetime) -> int:
+    """Give a level to threads whose background triage never finished (lost task, restart). Run by the scheduler."""
+    cutoff = at - timedelta(seconds=get_settings().stale_intake_seconds)
+    ids = db.scalars(select(MedicalCase.id).where(MedicalCase.kind == CaseKind.SYMPTOM, MedicalCase.status == CaseStatus.INTAKE, MedicalCase.created_at <= cutoff)).all()
+    recovered = 0
+    for case_id in ids:
+        case = lock_case(db, case_id)
+        if case.status != CaseStatus.INTAKE:
+            continue
+        _raise_level(db, case, Urgency.SOON, "fallback")
+        post_message(db, case, MessageAuthor.AI, _guidance(Urgency.SOON, _patient_flags(case, subject_age(case, at.date())), [], None), {"kind": "guidance", "level": "SOON"})
+        audit.record(db, "triage.intake_recovered", "MedicalCase", case.id, actor_type="SYSTEM", org_id=case.org_id)
+        recovered += 1
+    return recovered
 
 
 def _ask(db: Session, case: MedicalCase, flags: list[str], age: float | None, model_questions: list, corpus: str) -> None:
@@ -171,7 +213,7 @@ def _ask(db: Session, case: MedicalCase, flags: list[str], age: float | None, mo
     for q in model_questions:
         if len(chosen) >= questions.MAX_PER_ROUND:
             break
-        if q.id in asked or q.id in questions.BANK or not (2 <= len(q.options) <= 3):
+        if q.id in asked or q.id in questions.BANK or not (2 <= len(q.options) <= 3) or len(q.id) > 60 or any(len(o) > 60 for o in q.options):
             continue
         if any(patient_text_issues(t, corpus) for t in [q.question, *q.options]):
             continue

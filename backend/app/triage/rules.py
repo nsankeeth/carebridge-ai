@@ -74,8 +74,13 @@ def age_band(age_years: float | None) -> str:
     return "child" if age_years < 18 else "adult"
 
 
+_CLAUSE_BREAK = re.compile(r"[.;,!?\n]|\b(?:and|but|or|then|plus)\b")
+
+
 def _negated(text: str, start: int) -> bool:
-    before = re.findall(r"[a-z']+", text[:start])[-3:]
+    """A negator counts only within the same clause, at most 3 words before the match."""
+    clause = _CLAUSE_BREAK.split(text[:start])[-1]
+    before = re.findall(r"[a-z']+", clause)[-3:]
     return any(w in _NEGATORS for w in before)
 
 

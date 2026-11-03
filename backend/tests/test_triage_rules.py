@@ -101,3 +101,10 @@ def test_fixed_content_has_no_diagnosis_or_medication_advice():
     for t in texts:
         bad = [label for label, rx in UNSAFE_PATTERNS if label != "triage decision" and rx.search(t)]
         assert not bad, (t, bad)
+
+
+def test_negation_stops_at_clause_boundaries():
+    # Review C2: a negator in an earlier sentence or clause must not cancel a later red flag.
+    assert rules.evaluate("No fever. Can't breathe.", {}, 30).level == Urgency.EMERGENCY
+    assert "chest_pain" in codes(rules.evaluate("He has no appetite and chest pain", {}, 60))
+    assert "breathing_difficulty" in codes(rules.evaluate("not eating, struggling to breathe", {}, 8))

@@ -193,3 +193,66 @@ def test_no_questions_after_two_rounds_or_at_emergency(people):
     cid2 = symptom_case(people, text="I have crushing chest pain")
     db, case = _intake_and_model(cid2)
     assert _questions(case) == []
+
+
+def test_model_question_with_overlong_option_is_not_asked(people):
+    # Review M2: options the answer API rejects (>60 chars) must never be rendered as buttons.
+    long_opt = "Yes, and it has been getting steadily worse over the last several hours"
+    cid = symptom_case(people, text="My stomach has been hurting since last night")
+    FakeProvider.overrides = {"triage_assessment": _triage_override(follow_up_questions=[
+        {"id": "pain_change", "question": "Is the pain changing?", "options": [long_opt, "No"]},
+        {"id": "pain_where", "question": "Where is the pain?", "options": ["Upper", "Lower"]},
+    ])}
+    db, case = _intake_and_model(cid)
+    assert {q["id"] for q in _questions(case)} == {"pain_where"}
+
+
+def test_model_run_does_not_overwrite_a_concurrent_emergency(people):
+    # Review C1: while Meta is thinking about message 1, message 2 ("turning blue") commits EMERGENCY.
+    # The background run must re-read the case, not write its stale level/status over it.
+    cid = symptom_case(people, text="My stomach has been hurting since last night")
+    db, case = _open(cid)
+    a = engine.intake(db, case, case.messages[-1])
+    db.commit()
+    aid = a.id
+    db.close()
+
+    def concurrent_request(ctx):
+        other, c2 = _open(cid)
+        m = post_message(other, c2, MessageAuthor.PATIENT, "Now her lips are turning blue")
+        engine.intake(other, c2, m)
+        other.commit()
+        other.close()
+        return fake_outputs.structured("triage_assessment", ctx) | {"level": "URGENT"}
+
+    FakeProvider.overrides = {"triage_assessment": concurrent_request}
+    engine.run_model_triage(aid)
+    db, case = _open(cid)
+    assert case.urgency == Urgency.EMERGENCY
+    assert case.status == CaseStatus.HANDOFF_SENT
+
+
+def test_stale_intake_is_recovered_by_the_sweep(people):
+    # Review I1: if the background Meta run is lost (restart, crash), the thread must not sit in INTAKE unpaged.
+    from datetime import timedelta
+
+    from app.services import now
+
+    stale = symptom_case(people, text="My stomach has been hurting since last night")
+    fresh = symptom_case(people, text="My knee is a bit sore")
+    for cid in (stale, fresh):
+        db, case = _open(cid)
+        engine.intake(db, case, case.messages[-1])
+        db.commit()
+        db.close()
+    db = SessionLocal()
+    assert engine.recover_stale_intake(db, now() + timedelta(seconds=5)) == 0
+    db.get(MedicalCase, stale).created_at = now() - timedelta(minutes=5)
+    db.commit()
+    assert engine.recover_stale_intake(db, now()) == 1
+    db.commit()
+    db, case = _open(stale)
+    assert case.urgency == Urgency.SOON and case.urgency_set_by == "fallback"
+    assert case.status == CaseStatus.HANDOFF_SENT and case.handoffs
+    assert _guidance(case)[-1].startswith(content.GUIDANCE[Urgency.SOON])
+    assert SessionLocal().get(MedicalCase, fresh).status == CaseStatus.INTAKE

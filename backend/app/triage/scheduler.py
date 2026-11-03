@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.db import SessionLocal
 from app.services import now
-from app.triage import routing
+from app.triage import engine, routing
 
 log = logging.getLogger("triage.scheduler")
 _task: asyncio.Task | None = None
@@ -17,7 +17,8 @@ _task: asyncio.Task | None = None
 def _tick() -> dict[str, int]:
     db = SessionLocal()
     try:
-        counts = routing.sweep(db, now())
+        at = now()
+        counts = {**routing.sweep(db, at), "recovered": engine.recover_stale_intake(db, at)}
         db.commit()
         return counts
     except Exception:

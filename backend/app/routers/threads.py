@@ -201,6 +201,7 @@ class UrgencyIn(BaseModel):
 @clinician_router.post("/threads/{case_id}/urgency")
 def change_urgency(case_id: uuid.UUID, body: UrgencyIn, user: User = Depends(clinician_user), db: Session = Depends(get_db)) -> dict:
     case, _ = _clinician_thread(db, user, case_id)
+    case = engine.lock_case(db, case.id)
     previous = case.urgency
     case.urgency, case.urgency_set_by = body.level, "clinician"
     case.urgency_baseline_flags = list(dict.fromkeys(code for a in case.triage_assessments for code in a.rule_flags))

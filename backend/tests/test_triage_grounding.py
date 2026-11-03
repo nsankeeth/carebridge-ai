@@ -49,3 +49,30 @@ def test_schemas_are_strict():
         js = json_schema_for(schema)
         assert js["additionalProperties"] is False
         assert set(js["required"]) == set(js["properties"])
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "This sounds like croup.",
+        "It's probably just a virus.",
+        "It could be a stomach bug.",
+        "You can manage this at home.",
+        "See a doctor tomorrow if it continues.",
+        "Go to urgent care.",
+        "Take her to a walk-in clinic.",
+        "Just monitor her at home for now.",
+        "It may be appendicitis.",
+    ],
+)
+def test_patient_text_blocks_causes_and_care_instructions(text):
+    # Review I2: causes and care-level instructions must never come from model text.
+    assert grounding.patient_text_issues(text, corpus_of("tummy hurts")), text
+
+
+def test_patient_text_allows_a_plain_acknowledgement():
+    ack = "It is understandable to feel worried when she is this sleepy and not drinking. Your care team is being contacted now."
+    assert grounding.patient_text_issues(ack, corpus_of("she is sleepy and not drinking")) == []

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     routine_ack_minutes: int = 1440
     scheduler_interval_seconds: int = 60
     scheduler_enabled: bool = True
+    # A thread still unleveled this long after creation gets SOON and is paged (background triage was lost).
+    stale_intake_seconds: int = 90
 
 
 @lru_cache
