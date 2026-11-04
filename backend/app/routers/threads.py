@@ -150,7 +150,7 @@ async def transcribe(audio: UploadFile = File(...), user: User = Depends(patient
     if problem:
         raise AppError("unsupported_audio", problem)
     try:
-        text = voice.transcribe(db, data)
+        text = voice.transcribe(db, data, user.org_id)
     except voice.VoiceError:
         db.commit()  # keep the failed call in the model log
         raise AppError("transcription_failed", "We couldn't transcribe that recording. Please try again or type your message.", 502)

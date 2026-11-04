@@ -89,3 +89,25 @@ def test_empty_transcript_is_reported(client, auth, monkeypatch):
     r = _send(client, auth["patient_a"], wav_bytes())
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "no_speech"
+
+
+def test_voice_calls_show_in_the_admin_meta_log_for_their_org_only(client, auth, meta_asr):
+    from app.models import Organization, User, UserRole
+    from app.security import hash_password
+    from tests.conftest import PASSWORD, login
+
+    assert _send(client, auth["patient_a"], wav_bytes()).status_code == 200
+    calls = client.get("/api/admin/model-calls", headers=auth["admin"]).json()
+    assert [c["model_id"] for c in calls if c["task"] == "voice_transcribe"] == ["muse-voice-transcribe-1.0"]
+    overview = client.get("/api/admin/overview", headers=auth["admin"]).json()
+    assert "muse-voice-transcribe-1.0" in str(overview)
+
+    db = SessionLocal()
+    other = Organization(name="Other Org")
+    db.add(other)
+    db.flush()
+    db.add(User(org_id=other.id, email="admin@other.demo", full_name="Other Admin", role=UserRole.ADMIN, password_hash=hash_password(PASSWORD)))
+    db.commit()
+    db.close()
+    other_calls = client.get("/api/admin/model-calls", headers=login(client, "admin@other.demo")).json()
+    assert not [c for c in other_calls if c["task"] == "voice_transcribe"]

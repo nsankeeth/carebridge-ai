@@ -423,6 +423,7 @@ class ModelCall(Base):
     id: Mapped[uuid.UUID] = uuid_pk()
     execution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_executions.id"), index=True)
     case_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("medical_cases.id"), index=True)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("organizations.id"), index=True)  # for calls made before a case exists (voice)
     task: Mapped[str] = mapped_column(String(60))
     provider: Mapped[str] = mapped_column(String(50))
     model_id: Mapped[str] = mapped_column(String(100))

@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app import audit, serializers, services
@@ -29,14 +29,19 @@ from app.security import hash_password
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
+def _in_org(user: User):
+    """Model calls belong to the org through their case, or directly when no case exists yet (voice)."""
+    return or_(MedicalCase.org_id == user.org_id, ModelCall.org_id == user.org_id)
+
+
 @router.get("/overview")
 def overview(user: User = Depends(admin_user), db: Session = Depends(get_db)) -> dict:
     by_status = dict(db.execute(select(MedicalCase.status, func.count()).where(MedicalCase.org_id == user.org_id).group_by(MedicalCase.status)).all())
     cases = db.scalars(select(MedicalCase).where(MedicalCase.org_id == user.org_id).order_by(MedicalCase.updated_at.desc()).limit(50))
     calls = db.execute(
         select(ModelCall.provider, ModelCall.model_id, ModelCall.status, func.count(), func.avg(ModelCall.latency_ms), func.sum(ModelCall.total_tokens))
-        .join(MedicalCase, MedicalCase.id == ModelCall.case_id)
-        .where(MedicalCase.org_id == user.org_id)
+        .outerjoin(MedicalCase, MedicalCase.id == ModelCall.case_id)
+        .where(_in_org(user))
         .group_by(ModelCall.provider, ModelCall.model_id, ModelCall.status)
     ).all()
     return {
@@ -180,5 +185,5 @@ def executions(limit: int = Query(default=50, le=200), user: User = Depends(admi
 
 @router.get("/model-calls")
 def model_calls(limit: int = Query(default=100, le=500), user: User = Depends(admin_user), db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.scalars(select(ModelCall).join(MedicalCase, MedicalCase.id == ModelCall.case_id).where(MedicalCase.org_id == user.org_id).order_by(ModelCall.created_at.desc()).limit(limit))
+    rows = db.scalars(select(ModelCall).outerjoin(MedicalCase, MedicalCase.id == ModelCall.case_id).where(_in_org(user)).order_by(ModelCall.created_at.desc()).limit(limit))
     return [serializers.model_call(m) for m in rows]

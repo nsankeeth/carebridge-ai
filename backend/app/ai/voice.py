@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import time
+import uuid
 import wave
 
 import httpx
@@ -61,10 +62,10 @@ def _post(audio: bytes) -> dict:
     return r.json()
 
 
-def transcribe(db: Session, audio: bytes) -> str:
+def transcribe(db: Session, audio: bytes, org_id: uuid.UUID) -> str:
     """Send a checked WAV to Meta and return the transcript. Every call is logged without its content."""
     started = time.monotonic()
-    call = ModelCall(task="voice_transcribe", provider="meta", model_id=MODEL_ID, status="ok", latency_ms=0)
+    call = ModelCall(org_id=org_id, task="voice_transcribe", provider="meta", model_id=MODEL_ID, status="ok", latency_ms=0)
     try:
         out = _post(audio)
         call.response_id = str(out.get("sessionId") or "")[:100] or None
