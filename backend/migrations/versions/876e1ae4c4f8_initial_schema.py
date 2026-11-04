@@ -308,3 +308,7 @@ def downgrade() -> None:
     op.drop_table('users')
     op.drop_table('organizations')
     # ### end Alembic commands ###
+    # Dropping the tables leaves their enum types behind; remove them so the schema can be created again.
+    for name in ('casestatus', 'consentstatus', 'executionstatus', 'findingstatus', 'handoffstatus',
+                 'nextstep', 'summaryassessment', 'summarystatus', 'taskstatus', 'userrole'):
+        op.execute(f'DROP TYPE IF EXISTS {name}')
