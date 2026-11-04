@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
+import { VoiceButton } from "@/components/thread/voice-button";
 import { ageLabel } from "@/lib/format";
 import type { Dependent, PatientThread } from "@/lib/types";
 
@@ -87,6 +88,7 @@ export function NewThreadComposer() {
           <Button type="button" variant="ghost" size="sm" onClick={() => fileInput.current?.click()}>
             <Paperclip className="size-4" /> {file ? file.name : "Attach a lab report (PDF)"}
           </Button>
+          <VoiceButton onTranscript={(said) => setText((t) => (t.trim() ? `${t.trim()} ${said}` : said))} disabled={create.isPending} />
         </div>
         <Button type="submit" data-testid="composer-send" disabled={!text.trim() || create.isPending}>
           {create.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} Send
@@ -148,6 +150,7 @@ export function ReplyComposer({ threadId, disabled }: { threadId: string; disabl
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
+      <VoiceButton size="icon" onTranscript={(said) => setText((t) => (t.trim() ? `${t.trim()} ${said}` : said))} disabled={disabled || send.isPending} />
       <Button type="submit" size="icon" aria-label="Send" data-testid="reply-send" disabled={disabled || !text.trim() || send.isPending}>
         {send.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
       </Button>

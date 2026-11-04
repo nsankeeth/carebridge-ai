@@ -2,7 +2,7 @@
 
 AI medical navigation and clinician handoff agent, powered by Meta models.
 
-A patient or parent describes what's wrong → red-flag rules and a Meta model set the urgency (Call 911 immediately
+A patient or parent describes what's wrong, typed or spoken (Muse Voice Transcribe) → red-flag rules and a Meta model set the urgency (Call 911 immediately
 when it may be an emergency) → the family doctor and on-call clinicians are paged and escalated until someone
 responds → the clinician reads a grounded Meta-drafted brief and replies or calls. Lab PDFs attached in a thread are
 read and explained by Meta, every value checked against the PDF. Everything is audited.

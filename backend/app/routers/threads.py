@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import access, audit, serializers, services, storage, workflow
 from app.agent import pipeline
+from app.ai import voice
 from app.db import get_db
 from app.deps import clinician_user, patient_user
 from app.errors import AppError, Conflict, NotFound
@@ -139,6 +140,25 @@ async def attach(case_id: uuid.UUID, background: BackgroundTasks, file: UploadFi
     ex = pipeline.start_document_processing(db, case, doc, user)
     background.add_task(pipeline.run_processing, ex.id)
     return {"document_id": str(doc.id)}
+
+
+@patient_router.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...), user: User = Depends(patient_user), db: Session = Depends(get_db)) -> dict:
+    """Turn a spoken message into text with Muse Voice Transcribe. The patient reviews it before sending."""
+    data = await audio.read(voice.MAX_BYTES + 1)
+    problem = voice.check_wav(data)
+    if problem:
+        raise AppError("unsupported_audio", problem)
+    try:
+        text = voice.transcribe(db, data)
+    except voice.VoiceError:
+        db.commit()  # keep the failed call in the model log
+        raise AppError("transcription_failed", "We couldn't transcribe that recording. Please try again or type your message.", 502)
+    audit.record(db, "voice.transcribed", "User", user.id, actor=user, details={"model_id": voice.MODEL_ID})
+    db.commit()
+    if not text:
+        raise AppError("no_speech", "We didn't catch any speech. Please try again.", 422)
+    return {"transcript": text}
 
 
 # --- Clinician ---------------------------------------------------------------------

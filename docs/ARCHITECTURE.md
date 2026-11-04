@@ -14,6 +14,7 @@ attached inside a thread (or shared as a standalone report case), where Meta mod
 | Database | PostgreSQL 16 | All records, audit trail, agent executions, model-call telemetry. |
 | Document store | Local volume (dev); key layout maps to a private S3 bucket | Original PDFs. |
 | LLM | **Meta Model API**, `https://api.meta.ai/v1`, model `muse-spark-1.3` | Report understanding, explanations, clinician summaries, tool-calling coordination. |
+| Speech to text | **Meta Model API**, model `muse-voice-transcribe-1.0` | Spoken symptom messages, turned into text the patient reviews before sending. |
 
 > **Our call:** one Python service instead of NestJS + a separate Python agent. With one developer and a 2-day
 > window, a single service removes a network hop, a second auth layer, and a duplicated data model. The
@@ -48,6 +49,7 @@ flowchart LR
 | 5 | Follow-up coordination | `agent/coordinator.py` mode `FOLLOW_UP` | tool calling; the model writes the admin messages | `create_follow_up_task`, `notify_*` args |
 | 6 | Symptom triage: urgency, red flags, follow-up questions, acknowledgement | `triage/engine.py` | structured output | `TriageModelOutput` |
 | 7 | Clinician triage brief: possible causes, questions, next steps, treatment draft | `triage/brief.py` | structured output | `ClinicianTriageBrief` |
+| 8 | Speech to text: a patient speaks their message, then checks the text before sending | `ai/voice.py` | `POST /v1/asr/transcribe`, model `muse-voice-transcribe-1.0` (WAV, mono 16-bit, 16 kHz) | transcript text; audio is never stored |
 
 The integration (`ai/provider.py`) uses the OpenAI-compatible Python SDK pointed at Meta's endpoint, as documented
 at dev.meta.ai (quickstart, structured output, tool calling, models pages). The same Pydantic class generates the
