@@ -114,7 +114,7 @@ export function ClinicianActions({ thread }: { thread: ClinicianThread }) {
               </SelectContent>
             </Select>
             <Input className="min-w-40 flex-1" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
-            <Button variant="outline" disabled={!reason.trim() || closed || urgency.isPending} onClick={() => urgency.mutate({ level, reason: reason.trim() }, { onSuccess: () => setReason("") })}>
+            <Button variant="outline" disabled={!reason.trim() || level === thread.urgency || closed || urgency.isPending} onClick={() => urgency.mutate({ level, reason: reason.trim() }, { onSuccess: () => setReason("") })}>
               Update
             </Button>
           </div>

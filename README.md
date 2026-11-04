@@ -7,6 +7,11 @@ when it may be an emergency) → the family doctor and on-call clinicians are pa
 responds → the clinician reads a grounded Meta-drafted brief and replies or calls. Lab PDFs attached in a thread are
 read and explained by Meta, every value checked against the PDF. Everything is audited.
 
+**The AI never gives the patient medical advice.** Patients see how urgent their message is, who on their care
+team has been contacted and by when, and, when fixed rules detect a possible emergency, a Call 911 screen that
+doesn't wait for any model. Possible causes, suggested questions and treatment ideas are drafted for the clinician
+only, and the clinician decides what to do.
+
 ## Quick start
 
 Requires Docker, Python 3.13, Node 20+.

@@ -21,7 +21,7 @@ def _subject(case: MedicalCase) -> str:
         years = (now().date() - dep.date_of_birth).days / 365.25
         return f"{dep.relation} of the account holder, age {years:.1f} years"
     dob = case.patient.date_of_birth
-    return f"the account holder, age {(now().date() - dob).days / 365.25:.0f} years" if dob else "the account holder"
+    return f"the account holder, age {int((now().date() - dob).days / 365.25)} years" if dob else "the account holder"
 
 
 def _prompt(case: MedicalCase) -> str:
@@ -70,6 +70,12 @@ def _generate(db: Session, case_id: uuid.UUID) -> ClinicianBrief | None:
             good = [q for q in c[key] if quote_grounded(q, corpus)]
             issues += [f"Dropped quote for '{c['cause']}': not found in patient messages" for q in c[key] if q not in good]
             c[key] = good
+        both = set(c["supporting_quotes"]) & set(c["against_quotes"])
+        if both:
+            # A quote can't be evidence both ways; it tells the clinician nothing about this cause.
+            c["supporting_quotes"] = [q for q in c["supporting_quotes"] if q not in both]
+            c["against_quotes"] = [q for q in c["against_quotes"] if q not in both]
+            issues.append(f"Dropped {len(both)} quote(s) used both for and against '{c['cause']}'")
     # Filled from the record, not the model: exactly what the patient was shown.
     data["what_ai_told_patient"] = [m.body for m in case.messages if m.author_type in (MessageAuthor.AI, MessageAuthor.SYSTEM)]
     version = (case.briefs[-1].version if case.briefs else 0) + 1

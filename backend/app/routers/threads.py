@@ -203,6 +203,8 @@ def change_urgency(case_id: uuid.UUID, body: UrgencyIn, user: User = Depends(cli
     case, _ = _clinician_thread(db, user, case_id)
     case = engine.lock_case(db, case.id)
     previous = case.urgency
+    if body.level == previous:
+        raise Conflict("same_urgency", "The thread is already at that urgency")
     case.urgency, case.urgency_set_by = body.level, "clinician"
     case.urgency_baseline_flags = list(dict.fromkeys(code for a in case.triage_assessments for code in a.rule_flags))
     audit.record(db, "triage.urgency_changed", "MedicalCase", case.id, actor=user, details={"from": previous.value if previous else None, "to": body.level.value, "reason": body.reason})

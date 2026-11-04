@@ -256,3 +256,45 @@ def test_stale_intake_is_recovered_by_the_sweep(people):
     assert case.status == CaseStatus.HANDOFF_SENT and case.handoffs
     assert _guidance(case)[-1].startswith(content.GUIDANCE[Urgency.SOON])
     assert SessionLocal().get(MedicalCase, fresh).status == CaseStatus.INTAKE
+
+
+def test_patient_guidance_has_no_care_tips(people):
+    # The AI routes; it doesn't advise. Patients see the level, who is contacted and when to call 911, not home-care tips.
+    cid = symptom_case(people, text=EXAMPLE, dependent_age_years=4)
+    db, case = _intake_and_model(cid)
+    assert not any("Until then" in b for b in _guidance(case))
+    assert not any("care_tip_ids" in (m.payload or {}) for m in case.messages)
+    assert not hasattr(content, "CARE_TIPS")
+
+
+def _count(case, text):
+    return sum(text in m.body for m in case.messages)
+
+
+def test_call_911_wording_is_posted_once_when_rules_find_an_emergency(people):
+    cid = symptom_case(people, text="I have crushing chest pain")
+    db, case = _intake_and_model(cid)
+    assert case.urgency == Urgency.EMERGENCY
+    assert _count(case, content.GUIDANCE[Urgency.EMERGENCY]) == 1
+    assert any("Your care team is being contacted" in b for b in _bodies(case, MessageAuthor.AI)), "acknowledgement still posted"
+
+
+def test_call_911_wording_is_posted_once_when_the_model_finds_an_emergency(people):
+    cid = symptom_case(people, text="my tummy feels strange")
+    FakeProvider.overrides = {"triage_assessment": _triage_override(level="EMERGENCY")}
+    db, case = _intake_and_model(cid)
+    assert case.urgency == Urgency.EMERGENCY
+    assert _count(case, content.GUIDANCE[Urgency.EMERGENCY]) == 1
+
+
+def test_adult_age_in_prompt_is_whole_years(people):
+    from datetime import timedelta
+
+    from app.models import PatientProfile
+    from app.services import now
+
+    cid = symptom_case(people, text="tummy hurts")
+    db, case = _open(cid)
+    case.patient.date_of_birth = now().date() - timedelta(days=int(38.7 * 365.25))
+    db.flush()
+    assert "aged 38" in engine._prompt(case, engine.subject_age(case, now().date()), [])

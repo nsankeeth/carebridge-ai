@@ -36,7 +36,6 @@ def structured(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
             "red_flags": [{"flag": "reported_symptoms", "patient_quote": quote}] if quote else [],
             "reasons": ["Test double reasoning."],
             "follow_up_questions": [{"id": "pain_location", "question": "Where does it hurt most?", "options": ["Middle", "Lower right", "All over"]}],
-            "care_tip_ids": ["rest", "stay_with_them"],
             "acknowledgement": "Thank you for telling us what is happening. Your care team is being contacted.",
         }
     if task == "clinician_triage_brief":

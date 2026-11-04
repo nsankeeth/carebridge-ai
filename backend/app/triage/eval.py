@@ -13,7 +13,7 @@ from app.ai.provider import ModelCallError, get_provider
 from app.ai.schemas import TriageModelOutput
 from app.config import get_settings
 from app.models import URGENCY_RANK, Urgency, max_urgency
-from app.triage import content, questions, rules
+from app.triage import questions, rules
 from app.triage.eval_cases import VIGNETTES
 
 
@@ -23,7 +23,7 @@ def main() -> int:
         print("MODEL_API_KEY is not set; the evaluation needs live Meta inference.")
         return 0
     provider = get_provider()
-    system = prompts.triage_system(list(content.CARE_TIPS), list(questions.BANK))
+    system = prompts.triage_system(list(questions.BANK))
     print(f"model={s.meta_model} endpoint={s.meta_base_url} run={date.today()}\n")
     print(f"{'vignette':45} {'min':9} {'rules':9} {'model':9} {'final':9} result  latency")
     passed = model_alone = 0

@@ -24,6 +24,7 @@ from app.db import SessionLocal
 from app.errors import AppError
 from app.models import (
     AgentExecution,
+    CaseKind,
     CaseStatus,
     ClinicalHandoff,
     ExecutionStatus,
@@ -286,4 +287,5 @@ def _run(db: Session, execution_id: uuid.UUID, triggered_by_id: uuid.UUID | None
 def follow_up_candidates(db: Session, org_id: uuid.UUID) -> list[MedicalCase]:
     """Deterministic selection of cases worth a follow-up check; the agent decides what (if anything) to do."""
     statuses = [CaseStatus.HANDOFF_SENT, CaseStatus.ACKNOWLEDGED, CaseStatus.UNDER_REVIEW, CaseStatus.REVIEW_COMPLETED, CaseStatus.SUMMARY_READY, CaseStatus.AWAITING_CONSENT, CaseStatus.NEEDS_CORRECTION]
-    return list(db.scalars(select(MedicalCase).where(MedicalCase.org_id == org_id, MedicalCase.status.in_(statuses))))
+    # Symptom threads are escalated on their own, shorter clock by triage.routing.sweep.
+    return list(db.scalars(select(MedicalCase).where(MedicalCase.org_id == org_id, MedicalCase.kind == CaseKind.REPORT, MedicalCase.status.in_(statuses))))

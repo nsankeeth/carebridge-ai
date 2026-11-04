@@ -96,7 +96,7 @@ def test_every_level_has_guidance_and_every_flag_has_worsening_sign():
 
 
 def test_fixed_content_has_no_diagnosis_or_medication_advice():
-    texts = list(content.GUIDANCE.values()) + list(content.CARE_TIPS.values()) + list(content.WORSENING_SIGNS.values())
+    texts = list(content.GUIDANCE.values()) + list(content.WORSENING_SIGNS.values())
     texts += content.EMERGENCY_STEPS + [content.GUIDANCE_FALLBACK]
     for t in texts:
         bad = [label for label, rx in UNSAFE_PATTERNS if label != "triage decision" and rx.search(t)]

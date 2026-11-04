@@ -36,7 +36,7 @@ classification review.
 | A clinician's judgment overridden | After a clinician sets the level, only new rule red flags can raise it; the model's view is recorded only | `engine`, `urgency_baseline_flags` |
 | Consent withdrawn mid-emergency | Clinician access and escalation stop; the patient's 911 screen and urgent-care advice stay | `services.withdraw_consent` |
 
-The red-flag phrases, question bank, care tips and template wording were written for a demo and must be reviewed
+The red-flag phrases, question bank and template wording were written for a demo and must be reviewed
 by clinicians before any real use. The live evaluation (`python -m app.triage.eval`) is a smoke test on synthetic
 vignettes, not clinical validation.
 

@@ -101,3 +101,29 @@ def test_assess_requires_correction(people):
         brief.assess(db, case, actor, SummaryAssessment.CORRECTED, " ")
     b = brief.assess(db, case, actor, SummaryAssessment.CORRECTED, "Lethargy is mild")
     assert b.assessment == SummaryAssessment.CORRECTED and b.correction == "Lethargy is mild"
+
+
+def test_quote_used_both_for_and_against_a_cause_is_dropped_from_both(people):
+    cid = symptom_case(people, text=TEXT)
+    FakeProvider.overrides = {"clinician_triage_brief": _brief_override(
+        possible_causes=[{"cause": "X", "supporting_quotes": ["very lethargic", "refusing to drink"], "against_quotes": ["very lethargic"], "likelihood": "lower"}],
+    )}
+    brief.generate(cid)
+    b = SessionLocal().get(MedicalCase, cid).briefs[-1]
+    cause = b.content["possible_causes"][0]
+    assert cause["supporting_quotes"] == ["refusing to drink"] and cause["against_quotes"] == []
+    assert any("both for and against" in i for i in b.validation_issues)
+
+
+def test_adult_age_in_brief_is_whole_years(people):
+    from datetime import timedelta
+
+    from app.services import now
+
+    cid = symptom_case(people, text=TEXT)
+    db = SessionLocal()
+    case = db.get(MedicalCase, cid)
+    case.patient.date_of_birth = now().date() - timedelta(days=int(38.7 * 365.25))
+    db.flush()
+    assert "age 38 years" in brief._prompt(case)
+    db.close()

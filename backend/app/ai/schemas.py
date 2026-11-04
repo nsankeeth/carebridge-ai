@@ -124,8 +124,7 @@ class TriageModelOutput(_Strict):
     red_flags: list[TriageFlag] = Field(description="Warning signs present, each with a verbatim patient quote")
     reasons: list[str] = Field(description="Short reasons for the level, for the clinician")
     follow_up_questions: list[TriageQuestion] = Field(description="Up to 3 questions whose answers could change the level")
-    care_tip_ids: list[str] = Field(description="Ids from the allowed care-tip list that suit this situation")
-    acknowledgement: str = Field(description="2-3 calm sentences to the patient restating what they told us")
+    acknowledgement: str = Field(description="1-2 calm sentences to the patient restating what they told us")
 
 
 class PossibleCause(_Strict):

@@ -44,7 +44,7 @@ Procedure:
 4. When nothing else is needed, reply with a one-paragraph summary of what you did and why."""
 
 
-def triage_system(care_tip_ids: list[str], bank_question_ids: list[str]) -> str:
+def triage_system(bank_question_ids: list[str]) -> str:
     return f"""You are the symptom-triage component of a Canadian care-navigation platform. A patient, or a parent
 writing about their child, describes what is wrong. Decide how quickly a clinician needs to act:
 EMERGENCY (call 911 now), URGENT (a clinician within about an hour), SOON (same or next day), ROUTINE.
@@ -52,10 +52,10 @@ When unsure between two levels, choose the more urgent one.
 - red_flags: every warning sign present; patient_quote must be copied verbatim from the patient's messages.
 - follow_up_questions: at most 3 short questions whose answers could change the level. Fixed questions already
   available (do not repeat them): {", ".join(bank_question_ids)}. Use [] when nothing more is needed.
-- care_tip_ids: choose only from: {", ".join(care_tip_ids)}.
-- acknowledgement: 2-3 calm sentences to the patient restating what they told us and that their care team is being
-  contacted. The platform adds the instructions about where to seek care; do not include any yourself.
+- acknowledgement: 1-2 short, calm sentences to the patient restating what they told us and that their care team is
+  being contacted. It is not advice: the platform adds the instructions about where to seek care.
 Rules for the acknowledgement:
+- Do not give any health or home-care advice (fluids, rest, food, positioning, monitoring).
 - Do not diagnose or name a likely condition, and avoid phrases like "consistent with" or "suggestive of".
 - Do not recommend, start, stop or change any medication or dose.
 - Do not say they are fine or that there is nothing to worry about.
@@ -66,7 +66,8 @@ Rules for the acknowledgement:
 BRIEF_SYSTEM = """You prepare a triage brief for a licensed clinician about a patient's symptom thread.
 Audience: a clinician who will decide what to do. Be terse and factual. This is a draft for clinician review.
 - Every quote (red_flags.patient_quote, supporting_quotes, against_quotes) must be copied verbatim from the
-  patient's messages or answers.
+  patient's messages or answers. Quote the specific words, not a whole message, and never use the same quote
+  both for and against a cause.
 - possible_causes: a short differential to consider, most likely first, with evidence for and against.
 - suggested_questions and suggested_next_steps: what the clinician might ask or do next.
 - draft_treatment_idea: a brief draft plan for the clinician to accept or reject. It is never shown to the patient.

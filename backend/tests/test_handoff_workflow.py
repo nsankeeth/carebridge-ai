@@ -206,3 +206,16 @@ def test_agent_can_notify_clinician_right_after_creating_handoff(client, auth, p
 )
 def test_admin_message_filter(text, blocked):
     assert bool(admin_message_issues(text)) is blocked
+
+
+def test_follow_up_agent_leaves_symptom_threads_to_the_escalation_sweep(people):
+    # Symptom threads escalate on their own clock (routing.sweep); their care-team consent names no single clinician.
+    from app.agent.coordinator import follow_up_candidates
+    from app.models import CaseStatus, MedicalCase
+    from tests.conftest import symptom_case
+
+    cid = symptom_case(people, status=CaseStatus.HANDOFF_SENT)
+    db = SessionLocal()
+    org_id = db.get(MedicalCase, cid).org_id
+    assert cid not in {c.id for c in follow_up_candidates(db, org_id)}
+    db.close()

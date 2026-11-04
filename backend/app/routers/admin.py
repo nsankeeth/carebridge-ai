@@ -102,6 +102,10 @@ def update_user(user_id: uuid.UUID, body: UserPatch, user: User = Depends(admin_
         if not target.clinician_profile:
             raise Conflict("not_clinician", "Only clinicians can be put on call")
         if body.on_call is not None:
+            if body.on_call and not target.clinician_profile.on_call and body.on_call_priority is None:
+                # Join the end of the on-call order.
+                last = db.scalar(select(func.max(ClinicianProfile.on_call_priority)).join(User, User.id == ClinicianProfile.user_id).where(User.org_id == user.org_id, ClinicianProfile.on_call.is_(True)))
+                target.clinician_profile.on_call_priority = (last or 0) + 1
             target.clinician_profile.on_call = body.on_call
         if body.on_call_priority is not None:
             target.clinician_profile.on_call_priority = body.on_call_priority

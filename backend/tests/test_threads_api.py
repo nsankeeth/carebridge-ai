@@ -162,3 +162,18 @@ def test_handoffs_exist_per_paged_clinician(client, auth, people):
     t = start_thread(client, auth["patient_a"], EXAMPLE, dep)
     hs = SessionLocal().scalars(select(ClinicalHandoff).where(ClinicalHandoff.case_id == uuid.UUID(t["id"]))).all()
     assert len(hs) == 2 and all(h.triage_id for h in hs)
+
+
+def test_urgency_change_to_the_same_level_is_rejected(client, auth, people):
+    dep = setup_care_team(people)
+    t = start_thread(client, auth["patient_a"], EXAMPLE, dep)
+    r = client.post(f"/api/clinician/threads/{t['id']}/urgency", headers=auth["clin_a"], json={"level": "URGENT", "reason": "Checked"})
+    assert r.status_code == 409
+    assert SessionLocal().scalars(select(AuditEvent).where(AuditEvent.action == "triage.urgency_changed")).all() == []
+
+
+def test_putting_a_clinician_on_call_gives_the_next_position(client, auth, people):
+    setup_care_team(people, dependent=False)  # clin_b is on call at #1
+    r = client.patch(f"/api/admin/users/{people['clin_a']['user_id']}", headers=auth["admin"], json={"on_call": True})
+    assert r.status_code == 200
+    assert SessionLocal().get(ClinicianProfile, uuid.UUID(people["clin_a"]["profile_id"])).on_call_priority == 2

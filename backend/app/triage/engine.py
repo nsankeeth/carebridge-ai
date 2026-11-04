@@ -51,14 +51,12 @@ def _raise_level(db: Session, case: MedicalCase, level: Urgency | None, source: 
     return changed
 
 
-def _guidance(level: Urgency, flags: list[str], tips: list[str], ack: str | None) -> str:
+def _guidance(level: Urgency, flags: list[str], ack: str | None) -> str:
     parts = [ack] if ack else []
     parts.append(content.GUIDANCE[level])
     signs = [content.WORSENING_SIGNS[f] for f in flags if f in content.WORSENING_SIGNS]
     if signs and level != Urgency.EMERGENCY:
         parts.append("Watch for: " + " ".join(dict.fromkeys(signs)))
-    if tips and level != Urgency.EMERGENCY:
-        parts.append("Until then: " + " ".join(content.CARE_TIPS[t] for t in tips))
     return "\n\n".join(parts)
 
 
@@ -78,12 +76,12 @@ def intake(db: Session, case: MedicalCase, message: Message) -> TriageAssessment
     was_emergency = case.urgency == Urgency.EMERGENCY
     _raise_level(db, case, rule_level, "rules")
     if case.urgency == Urgency.EMERGENCY and not was_emergency:
-        post_message(db, case, MessageAuthor.AI, _guidance(Urgency.EMERGENCY, [], [], None), {"kind": "guidance", "level": "EMERGENCY"})
+        post_message(db, case, MessageAuthor.AI, _guidance(Urgency.EMERGENCY, [], None), {"kind": "guidance", "level": "EMERGENCY"})
     return a
 
 
 def _prompt(case: MedicalCase, age: float | None, rule_flags: list[str]) -> str:
-    who = f"a child aged {age:.1f} years (the parent is writing)" if case.subject_dependent and age is not None else f"the patient, aged {age:.0f}" if age is not None else "the patient"
+    who = f"a child aged {age:.1f} years (the parent is writing)" if case.subject_dependent and age is not None else f"the patient, aged {int(age)}" if age is not None else "the patient"
     lines = [f"About: {who}", f"Rule-based red flags found so far: {', '.join(rule_flags) or 'none'}", "", "Messages:"]
     for m in case.messages:
         if m.author_type == MessageAuthor.PATIENT:
@@ -132,7 +130,7 @@ def _run_model_triage(db: Session, assessment_id: uuid.UUID) -> uuid.UUID | None
     # 1. Model calls on a snapshot, holding no lock (they take tens of seconds).
     age = subject_age(case, now().date())
     corpus = patient_corpus(case.messages)
-    system = prompts.triage_system(list(content.CARE_TIPS), list(questions.BANK))
+    system = prompts.triage_system(list(questions.BANK))
     user = _prompt(case, age, _patient_flags(case, age))
     ctx = {"corpus": corpus, "rule_level": a.rule_level.value if a.rule_level else None}
     out, calls = call_structured(db, case, "triage_assessment", system, user, TriageModelOutput, ctx)
@@ -150,7 +148,7 @@ def _run_model_triage(db: Session, assessment_id: uuid.UUID) -> uuid.UUID | None
         a.status = "complete" if out else "model_failed"
         return None
     clinician_set = case.urgency_set_by == "clinician"
-    tips, model_questions = [], []
+    model_questions = []
     if out is None:
         a.status = "model_failed"
         if case.urgency is None and a.rule_level is None:
@@ -173,16 +171,23 @@ def _run_model_triage(db: Session, assessment_id: uuid.UUID) -> uuid.UUID | None
         if level is None:
             level, source = case.urgency or Urgency.SOON, case.urgency_set_by or "fallback"
         _raise_level(db, case, level, source)
-        tips = [t for t in out.care_tip_ids if t in content.CARE_TIPS]
         model_questions = out.follow_up_questions
     a.final_level = case.urgency
 
     level = case.urgency
     all_flags = _patient_flags(case, age)
-    if level != Urgency.EMERGENCY or ack:
-        post_message(db, case, MessageAuthor.AI, _guidance(level, all_flags, tips, ack), {"kind": "guidance", "level": level.value, "care_tip_ids": tips})
+    if level == Urgency.EMERGENCY and _emergency_guidance_shown(case):
+        # The Call 911 wording is already in the thread; add only the acknowledgement.
+        if ack:
+            post_message(db, case, MessageAuthor.AI, ack, {"kind": "acknowledgement", "level": level.value})
+    else:
+        post_message(db, case, MessageAuthor.AI, _guidance(level, all_flags, ack), {"kind": "guidance", "level": level.value})
     _ask(db, case, all_flags, age, model_questions, patient_corpus(case.messages))
     return case.id
+
+
+def _emergency_guidance_shown(case: MedicalCase) -> bool:
+    return any((m.payload or {}).get("kind") == "guidance" and m.payload.get("level") == Urgency.EMERGENCY.value for m in case.messages)
 
 
 def recover_stale_intake(db: Session, at: datetime) -> int:
@@ -195,7 +200,7 @@ def recover_stale_intake(db: Session, at: datetime) -> int:
         if case.status != CaseStatus.INTAKE:
             continue
         _raise_level(db, case, Urgency.SOON, "fallback")
-        post_message(db, case, MessageAuthor.AI, _guidance(Urgency.SOON, _patient_flags(case, subject_age(case, at.date())), [], None), {"kind": "guidance", "level": "SOON"})
+        post_message(db, case, MessageAuthor.AI, _guidance(Urgency.SOON, _patient_flags(case, subject_age(case, at.date())), None), {"kind": "guidance", "level": "SOON"})
         audit.record(db, "triage.intake_recovered", "MedicalCase", case.id, actor_type="SYSTEM", org_id=case.org_id)
         recovered += 1
     return recovered

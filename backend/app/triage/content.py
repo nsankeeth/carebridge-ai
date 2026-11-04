@@ -28,16 +28,6 @@ EMERGENCY_STEPS: list[str] = [
     "Unlock the door so responders can get in.",
 ]
 
-CARE_TIPS: dict[str, str] = {
-    "small_sips": "Offer small sips of an oral rehydration solution often, such as a spoonful every few minutes.",
-    "rest": "Let them rest, and check on them regularly.",
-    "track_urine": "Keep track of when they last peed or had a wet diaper.",
-    "light_clothing": "Dress them in light clothing and keep the room at a comfortable temperature.",
-    "fluids_before_food": "Don't push solid food for now; small amounts of fluid matter more.",
-    "stay_with_them": "Stay with them so you notice any change.",
-    "note_symptoms": "Write down when symptoms started and any changes, to share with the clinician.",
-}
-
 WORSENING_SIGNS: dict[str, str] = {
     "breathing_difficulty": "Call 911 if breathing becomes harder, noisy, or very fast.",
     "chest_pain": "Call 911 if chest pain spreads to the arm, jaw or back, or comes with sweating.",
